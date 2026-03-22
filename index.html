@@ -48,6 +48,17 @@
   </div>
 </div>
 
+<!-- VIEW SWITCHER -->
+<div class="px-6 pt-3 flex gap-1 border-b border-white/5">
+  <button onclick="switchView('dashboard')" id="view-dashboard"
+    class="px-4 py-2 text-sm glass glass-hover rounded-t-lg tab-active">🏠 Dashboard</button>
+  <button onclick="switchView('analytics')" id="view-analytics"
+    class="px-4 py-2 text-sm glass glass-hover rounded-t-lg">📊 Analytics</button>
+</div>
+
+<!-- DASHBOARD VIEW -->
+<div id="dashboard-view">
+
 <!-- PROJECT TABS -->
 <div class="px-6 pt-4 pb-0 flex gap-2 overflow-x-auto" id="project-tabs"></div>
 
@@ -111,6 +122,52 @@
     <div id="stories-table" class="space-y-1 max-h-80 overflow-y-auto"></div>
   </div>
 </div>
+
+</div><!-- /dashboard-view -->
+
+<!-- ANALYTICS VIEW -->
+<div id="analytics-view" class="hidden p-6 space-y-6">
+
+  <div class="flex items-center justify-between">
+    <h2 class="text-xs text-slate-500 uppercase tracking-widest">Agent Effectiveness</h2>
+    <span class="text-xs text-slate-600" id="analytics-gen-time">Loading…</span>
+  </div>
+
+  <!-- Agent table -->
+  <div class="glass rounded-xl overflow-hidden">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-white/5">
+          <th class="px-4 py-3 text-left text-xs text-slate-500 uppercase tracking-wider">Agent</th>
+          <th class="px-4 py-3 text-right text-xs text-slate-500 uppercase tracking-wider">Stories Done</th>
+          <th class="px-4 py-3 text-right text-xs text-slate-500 uppercase tracking-wider">Reviewed</th>
+          <th class="px-4 py-3 text-right text-xs text-slate-500 uppercase tracking-wider">1st-Pass %</th>
+          <th class="px-4 py-3 text-right text-xs text-slate-500 uppercase tracking-wider">Avg Duration</th>
+          <th class="px-4 py-3 text-right text-xs text-slate-500 uppercase tracking-wider">Total Runs</th>
+          <th class="px-4 py-3 text-right text-xs text-slate-500 uppercase tracking-wider">MB Logged</th>
+        </tr>
+      </thead>
+      <tbody id="agent-analytics-table"></tbody>
+    </table>
+  </div>
+
+  <!-- Pipeline stat cards -->
+  <div class="grid grid-cols-4 gap-4" id="pipeline-cards"></div>
+
+  <!-- Burndown chart -->
+  <div class="glass rounded-xl p-4">
+    <h2 class="text-xs text-slate-500 uppercase tracking-widest mb-4">Story Burndown</h2>
+    <div style="position:relative;height:260px;">
+      <canvas id="burndown-chart"></canvas>
+    </div>
+  </div>
+
+  <!-- Not loaded -->
+  <div id="analytics-error" class="hidden text-center text-slate-500 py-12 text-sm">
+    analytics.json not available — run <code class="text-amber-400">python3 scripts/analytics.py</code> first
+  </div>
+
+</div><!-- /analytics-view -->
 
 <script>
 // ── Data ────────────────────────────────────────────────────────────────────
@@ -380,6 +437,159 @@ function renderStories(proj) {
 // Init
 refreshData();
 setInterval(refreshData, 60000);
+
+// ── Analytics ────────────────────────────────────────────────────────────────
+let currentView = 'dashboard';
+let burndownChart = null;
+
+function switchView(view) {
+  currentView = view;
+  document.getElementById('dashboard-view').classList.toggle('hidden', view !== 'dashboard');
+  document.getElementById('analytics-view').classList.toggle('hidden', view !== 'analytics');
+  document.getElementById('view-dashboard').classList.toggle('tab-active', view === 'dashboard');
+  document.getElementById('view-analytics').classList.toggle('tab-active', view === 'analytics');
+  if (view === 'analytics') loadAnalytics();
+}
+
+async function loadAnalytics() {
+  try {
+    const r = await fetch('analytics.json?t=' + Date.now());
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    renderAnalytics(d);
+  } catch(e) {
+    document.getElementById('analytics-error').classList.remove('hidden');
+    document.getElementById('agent-analytics-table').innerHTML = '';
+    document.getElementById('pipeline-cards').innerHTML = '';
+  }
+}
+
+function pctColor(val) {
+  if (val >= 0.80) return 'text-emerald-400';
+  if (val >= 0.60) return 'text-amber-400';
+  return 'text-red-400';
+}
+
+function fmtMb(mb) {
+  if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
+  return mb.toFixed(0) + ' MB';
+}
+
+function renderAnalytics(d) {
+  document.getElementById('analytics-error').classList.add('hidden');
+  document.getElementById('analytics-gen-time').textContent =
+    'Generated: ' + (d.generated_at || '').replace('T',' ').replace('Z',' UTC');
+
+  // ── Agent table ─────────────────────────────────────────────────────────
+  const AGENT_ICON = {arcee:'🤖', cursor:'🖱️', codex:'🧠', sonnet:'🎵'};
+  const tbody = document.getElementById('agent-analytics-table');
+  tbody.innerHTML = Object.entries(d.agents)
+    .sort((a,b) => b[1].stories_done - a[1].stories_done)
+    .map(([name, a]) => {
+      const fpr = a.first_pass_rate;
+      const col = pctColor(fpr);
+      const icon = AGENT_ICON[name] || '•';
+      return `<tr class="border-b border-white/5 glass-hover">
+        <td class="px-4 py-3 font-medium text-white">${icon} ${name}</td>
+        <td class="px-4 py-3 text-right text-slate-300">${a.stories_done}</td>
+        <td class="px-4 py-3 text-right text-slate-400">${a.stories_reviewed || 0}</td>
+        <td class="px-4 py-3 text-right font-mono ${col}">${(fpr*100).toFixed(0)}%</td>
+        <td class="px-4 py-3 text-right text-slate-400">${a.avg_duration_min} min</td>
+        <td class="px-4 py-3 text-right text-slate-400">${a.total_runs}</td>
+        <td class="px-4 py-3 text-right text-slate-400">${fmtMb(a.total_tokens_mb)}</td>
+      </tr>`;
+    }).join('');
+
+  // ── Pipeline cards ───────────────────────────────────────────────────────
+  const p = d.pipeline;
+  const retryRate = p.total_stories > 0
+    ? (p.stories_retried / p.total_stories) : 0;
+  const cards = [
+    { icon:'🔄', label:'Retry Rate',       value: (retryRate*100).toFixed(0)+'%',
+      color: retryRate < 0.3 ? 'emerald' : retryRate < 0.5 ? 'amber' : 'red' },
+    { icon:'✅', label:'Review Pass Rate', value: (p.review_pass_rate*100).toFixed(0)+'%',
+      color: p.review_pass_rate >= 0.8 ? 'emerald' : p.review_pass_rate >= 0.6 ? 'amber' : 'red' },
+    { icon:'⚡', label:'Avg Runs/Story',   value: p.avg_runs_per_story.toFixed(1),
+      color: 'indigo' },
+    { icon:'📈', label:'Epics Complete',   value: `${p.epics_complete}/${p.epics_total}`,
+      color: p.epics_complete === p.epics_total ? 'emerald' : 'amber' },
+  ];
+  document.getElementById('pipeline-cards').innerHTML = cards.map(c =>
+    `<div class="glass rounded-xl p-4 text-center">
+      <div class="text-2xl mb-1">${c.icon}</div>
+      <div class="text-xs text-slate-500 mb-1">${c.label}</div>
+      <div class="text-xl font-bold text-${c.color}-400">${c.value}</div>
+    </div>`
+  ).join('');
+
+  // ── Burndown chart ───────────────────────────────────────────────────────
+  const timeline = d.timeline || [];
+  const labels   = timeline.map(t => {
+    const [,, day] = t.date.split('-');
+    return 'Mar ' + parseInt(day);
+  });
+  const actual   = timeline.map(t => t.done_cumulative);
+  const total    = p.total_stories;
+  const target   = labels.map((_, i) => {
+    if (labels.length < 2) return total;
+    return Math.round(total * i / (labels.length - 1));
+  });
+
+  if (burndownChart) {
+    burndownChart.destroy();
+    burndownChart = null;
+  }
+  const ctx = document.getElementById('burndown-chart').getContext('2d');
+  burndownChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Actual',
+          data: actual,
+          borderColor: '#10b981',
+          backgroundColor: 'rgba(16,185,129,0.1)',
+          borderWidth: 2,
+          pointRadius: 4,
+          pointBackgroundColor: '#10b981',
+          fill: true,
+          tension: 0.3,
+        },
+        {
+          label: 'Target',
+          data: target,
+          borderColor: 'rgba(255,255,255,0.15)',
+          borderWidth: 1,
+          borderDash: [4,4],
+          pointRadius: 0,
+          fill: false,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          labels: { color: '#94a3b8', font: { family: 'monospace', size: 11 } },
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: '#64748b', font: { family: 'monospace', size: 11 } },
+          grid:  { color: 'rgba(255,255,255,0.04)' },
+        },
+        y: {
+          min: 0,
+          max: total + 2,
+          ticks: { color: '#64748b', font: { family: 'monospace', size: 11 } },
+          grid:  { color: 'rgba(255,255,255,0.04)' },
+        },
+      },
+    },
+  });
+}
 </script>
 </body>
 </html>
