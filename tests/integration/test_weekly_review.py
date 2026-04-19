@@ -74,3 +74,51 @@ def test_weekly_review_writes_file(tmp_path: Path, pipeline_log_tmp):
     assert "p2" in text and "1 fail" in text
     assert "old-week" not in text
     assert "Parallel track" in text
+
+
+def test_weekly_review_uses_one_normalized_week_membership_rule(tmp_path: Path, pipeline_log_tmp):
+    pipeline_log_tmp.append(
+        timestamp="2026-04-20T00:30:00+02:00",
+        project="boundary-offset",
+        skill="offset-skill",
+        provider="sonnet",
+        tokens_in=900,
+        tokens_out=900,
+        status="ok",
+        notes="raw date says Monday, UTC says prior ISO week",
+    )
+    pipeline_log_tmp.append(
+        timestamp="2026-04-21T03:00:00+00:00",
+        project="in-week",
+        skill="current-week-skill",
+        provider="sonnet",
+        tokens_in=120,
+        tokens_out=80,
+        status="ok",
+        notes="inside reviewed ISO week",
+    )
+
+    snapshots_dir = tmp_path / "snaps"
+    for d in [
+        "2026-04-20",
+        "2026-04-21",
+        "2026-04-22",
+    ]:
+        (snapshots_dir / d).mkdir(parents=True)
+
+    reviews = tmp_path / "reviews"
+    out = run_weekly_review(
+        pipeline_log=pipeline_log_tmp.path,
+        snapshots_dir=snapshots_dir,
+        reviews_dir=reviews,
+        now=datetime(2026, 4, 22, 9, 0, 0, tzinfo=timezone.utc),
+        projects_yaml=None,
+    )
+
+    text = out.read_text()
+
+    assert out.name == "2026-W17.md"
+    assert "Reporting window: 2026-04-20 to 2026-04-26" in text
+    assert "- in-week: in=120, out=80, runs=1" in text
+    assert "- in-week: 1 ok / 0 fail" in text
+    assert "boundary-offset" not in text

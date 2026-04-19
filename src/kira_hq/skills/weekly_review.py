@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Iterable
 
 from kira_hq.pipeline_log import GLOBAL_LOG
-from kira_hq.tokens import parse_log, top_n_weekly
+from kira_hq.tokens import parse_log
 
 
 DEFAULT_SNAPSHOTS_DIR = Path.home() / ".kira-hq" / "snapshots"
@@ -33,6 +33,20 @@ def _snapshot_days(now: datetime) -> Iterable[str]:
     start, _ = _week_window(now)
     for offset in range(7):
         yield (start.date() + timedelta(days=offset)).isoformat()
+
+
+def _top_n_rows(rows: list, n: int = 3) -> list[tuple[str, int, int]]:
+    totals: dict[str, dict[str, int]] = {}
+    for row in rows:
+        bucket = totals.setdefault(row.project, {"tokens_in": 0, "tokens_out": 0})
+        bucket["tokens_in"] += row.tokens_in
+        bucket["tokens_out"] += row.tokens_out
+    ranked = sorted(
+        totals.items(),
+        key=lambda kv: kv[1]["tokens_in"] + kv[1]["tokens_out"],
+        reverse=True,
+    )
+    return [(project, data["tokens_in"], data["tokens_out"]) for project, data in ranked[:n]]
 
 
 def run_weekly_review(
@@ -61,7 +75,7 @@ def run_weekly_review(
         if start <= ts < end:
             rows.append(row)
 
-    top3 = top_n_weekly(week_iso, pipeline_log, n=3)
+    top3 = _top_n_rows(rows, n=3)
     projects = sorted({row.project for row in rows})
     snapshot_count = sum(1 for day in _snapshot_days(now) if (snapshots_dir / day).exists())
 
