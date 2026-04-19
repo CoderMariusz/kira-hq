@@ -63,7 +63,7 @@ export default function ProjectDetailPage() {
                     <span className="mono text-[10px] text-[var(--muted)]">T-{task.id}</span>
                     <span className="mono text-[10px] uppercase text-[var(--muted)]">{task.priority}</span>
                   </div>
-                  <div className="text-sm leading-snug">Task {task.id}</div>
+                  <div className="text-sm leading-snug">{task.title}</div>
                   <div className="mono mt-1 text-[10px] text-[var(--muted)]">owner: {task.owner}</div>
                 </article>
               )) : <div className="text-xs italic text-[var(--muted)]">—</div>}

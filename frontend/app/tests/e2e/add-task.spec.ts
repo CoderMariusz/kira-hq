@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test'
 
-import { expectBasicAuthHeader, installApiMocks, interceptTaskCreate } from './support'
+import { expectNoPublicAuthHeader, installApiMocks, interceptTaskCreate } from './support'
 
-test('add-task form posts TaskCreate payload with Basic auth', async ({ page }) => {
+test('add-task form posts TaskCreate payload to project task endpoint without public auth', async ({ page }) => {
   await installApiMocks(page)
   const posts = await interceptTaskCreate(page)
 
@@ -24,6 +24,9 @@ test('add-task form posts TaskCreate payload with Basic auth', async ({ page }) 
   await page.getByTestId('f-submit').click()
 
   await expect.poll(() => posts.length).toBe(1)
-  expectBasicAuthHeader(posts[0].headers)
+  expect(posts[0].url).toContain('/api/projects/kira-hq/tasks')
+  expectNoPublicAuthHeader(posts[0].headers)
+  expect(posts[0].body).toBeTruthy()
   await expect(posts[0].body ?? '').toContain('11th task created')
+  await expect(posts[0].body ?? '').not.toContain('"project"')
 })

@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
-import { createTask } from '@/lib/api'
+import { createTask, getProjects } from '@/lib/api'
 
-const projects = ['kira-hq', 'monopilot', 'sandbox', 'fixture']
+const fallbackProjects = ['kira-hq', 'monopilot', 'sandbox', 'fixture']
 
 export default function AddTaskPage() {
+  const [projects, setProjects] = useState(fallbackProjects)
   const [project, setProject] = useState('kira-hq')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -14,16 +15,34 @@ export default function AddTaskPage() {
   const [parentId, setParentId] = useState('')
   const [status, setStatus] = useState('')
 
+  useEffect(() => {
+    void getProjects()
+      .then((items) => {
+        const names = items.map((item) => item.name)
+        if (!names.length) return
+        setProjects(names)
+        setProject((current) => (names.includes(current) ? current : names[0]))
+      })
+      .catch(() => undefined)
+  }, [])
+
+  const projectOptions = useMemo(() => Array.from(new Set(projects)), [projects])
+
   async function onSubmit() {
     setStatus('Submitting…')
-    await createTask({
-      project,
-      title,
-      description,
-      priority,
-      parent_id: parentId || undefined,
-    })
-    setStatus('Created')
+
+    try {
+      await createTask({
+        project,
+        title,
+        description,
+        priority,
+        parent_id: parentId || undefined,
+      })
+      setStatus('Created')
+    } catch {
+      setStatus('Failed')
+    }
   }
 
   return (
@@ -36,7 +55,7 @@ export default function AddTaskPage() {
         <div>
           <label className="mono mb-1 block text-xs text-[var(--muted)]" htmlFor="project">Project</label>
           <select id="project" data-testid="f-project" value={project} onChange={(event) => setProject(event.target.value)} className="w-full rounded-md border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-sm">
-            {projects.map((name) => <option key={name} value={name}>{name}</option>)}
+            {projectOptions.map((name) => <option key={name} value={name}>{name}</option>)}
           </select>
         </div>
         <div>

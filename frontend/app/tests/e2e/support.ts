@@ -1,7 +1,5 @@
 import { expect, Page, Route } from '@playwright/test'
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3100'
-
 export type ProjectSummary = {
   name: string
   title: string
@@ -13,6 +11,20 @@ export type ProjectSummary = {
     done: number
   }
   progress_pct: number
+}
+
+export type BackendProjectSummary = {
+  name: string
+  path: string
+  status: string
+  priority: string
+  tasks_summary: {
+    total: number
+    pending: number
+    'in-progress': number
+    blocked: number
+    done: number
+  }
 }
 
 export type ProjectTask = {
@@ -31,7 +43,7 @@ export const defaultProjectSummaries: ProjectSummary[] = [
     title: 'Kira HQ',
     root_path: '~/Projects/kira-hq',
     status_counts: { pending: 8, in_progress: 2, blocked: 1, done: 17 },
-    progress_pct: 68,
+    progress_pct: 61,
   },
   {
     name: 'monopilot',
@@ -49,21 +61,28 @@ export const defaultProjectSummaries: ProjectSummary[] = [
   },
 ]
 
-export const defaultProjectDetail = {
-  project: {
-    name: 'kira-hq',
-    title: 'Kira HQ',
-    root_path: '~/Projects/kira-hq',
+export const defaultBackendProjectSummaries: BackendProjectSummary[] = defaultProjectSummaries.map((project) => ({
+  name: project.name,
+  path: project.root_path,
+  status: 'active',
+  priority: 'medium',
+  tasks_summary: {
+    total: project.status_counts.pending + project.status_counts.in_progress + project.status_counts.blocked + project.status_counts.done,
+    pending: project.status_counts.pending,
+    'in-progress': project.status_counts.in_progress,
+    blocked: project.status_counts.blocked,
+    done: project.status_counts.done,
   },
-  tasks: [
-    { id: '18', title: 'Module 3 frontend', description: 'Build dashboard UI', status: 'pending', priority: 'high', owner: 'qwen', updated_at: '2026-04-19T08:00:00Z' },
-    { id: '19', title: 'Project view polish', description: 'Refine detail page', status: 'pending', priority: 'medium', owner: 'qwen', updated_at: '2026-04-19T08:00:00Z' },
-    { id: '20', title: 'Hermes integration', description: 'Wire Hermes entrypoints', status: 'in-progress', priority: 'high', owner: 'hermes', updated_at: '2026-04-19T08:10:00Z' },
-    { id: '21', title: 'Blocked task', description: 'Waiting for human input', status: 'blocked', priority: 'high', owner: 'human', updated_at: '2026-04-19T07:00:00Z' },
-    { id: '16', title: 'FastAPI backend', description: 'App factory + endpoints', status: 'done', priority: 'high', owner: 'opus', updated_at: '2026-04-19T06:00:00Z' },
-    { id: '17', title: 'HTTP Basic auth', description: 'Protect business routes', status: 'done', priority: 'high', owner: 'opus', updated_at: '2026-04-19T06:30:00Z' },
-  ] satisfies ProjectTask[],
-}
+}))
+
+export const defaultProjectTasks = [
+  { id: '18', title: 'Module 3 frontend', description: 'Build dashboard UI', status: 'pending', priority: 'high', owner: 'qwen', updated_at: '2026-04-19T08:00:00Z' },
+  { id: '19', title: 'Project view polish', description: 'Refine detail page', status: 'pending', priority: 'medium', owner: 'qwen', updated_at: '2026-04-19T08:00:00Z' },
+  { id: '20', title: 'Hermes integration', description: 'Wire Hermes entrypoints', status: 'in-progress', priority: 'high', owner: 'hermes', updated_at: '2026-04-19T08:10:00Z' },
+  { id: '21', title: 'Blocked task', description: 'Waiting for human input', status: 'blocked', priority: 'high', owner: 'human', updated_at: '2026-04-19T07:00:00Z' },
+  { id: '16', title: 'FastAPI backend', description: 'App factory + endpoints', status: 'done', priority: 'high', owner: 'opus', updated_at: '2026-04-19T06:00:00Z' },
+  { id: '17', title: 'HTTP Basic auth', description: 'Protect business routes', status: 'done', priority: 'high', owner: 'opus', updated_at: '2026-04-19T06:30:00Z' },
+] satisfies ProjectTask[]
 
 export const defaultNeedsAttention = {
   blocked_gt_48h: [
@@ -100,30 +119,27 @@ export const fixtureTaskList: ProjectTask[] = Array.from({ length: 10 }, (_, ind
 }))
 
 export async function installApiMocks(page: Page) {
-  await page.route(`${apiUrl}/projects`, async (route) => {
-    await fulfillJson(route, defaultProjectSummaries)
+  await page.route('**/api/projects', async (route) => {
+    await fulfillJson(route, defaultBackendProjectSummaries)
   })
 
-  await page.route(`${apiUrl}/projects/kira-hq`, async (route) => {
-    await fulfillJson(route, defaultProjectDetail)
+  await page.route('**/api/projects/kira-hq/tasks', async (route) => {
+    await fulfillJson(route, defaultProjectTasks)
   })
 
-  await page.route(`${apiUrl}/projects/fixture`, async (route) => {
-    await fulfillJson(route, {
-      project: { name: 'fixture', title: 'Fixture Project', root_path: '~/Projects/fixture' },
-      tasks: fixtureTaskList,
-    })
+  await page.route('**/api/projects/fixture/tasks', async (route) => {
+    await fulfillJson(route, fixtureTaskList)
   })
 
-  await page.route(`${apiUrl}/views/needs-attention`, async (route) => {
+  await page.route('**/api/views/needs-attention', async (route) => {
     await fulfillJson(route, defaultNeedsAttention)
   })
 
-  await page.route(`${apiUrl}/views/blockers`, async (route) => {
+  await page.route('**/api/views/blockers', async (route) => {
     await fulfillJson(route, defaultBlockers)
   })
 
-  await page.route(`${apiUrl}/metrics`, async (route) => {
+  await page.route('**/api/metrics', async (route) => {
     await fulfillJson(route, { projects: 3, tasks: 28, blocked: 2 })
   })
 }
@@ -137,13 +153,14 @@ export async function expectProjectCardCounters(page: Page, name: string, counts
 }
 
 export async function interceptTaskCreate(page: Page) {
-  const seen: Array<{ headers: Record<string, string>; body: string | null }> = []
+  const seen: Array<{ headers: Record<string, string>; body: string | null; url: string }> = []
 
-  await page.route(`${apiUrl}/tasks`, async (route) => {
+  await page.route('**/api/projects/*/tasks', async (route) => {
     const request = route.request()
     seen.push({
       headers: request.headers(),
       body: request.postData(),
+      url: request.url(),
     })
     await fulfillJson(route, { id: '11', title: '11th task created' }, 201)
   })
@@ -151,10 +168,8 @@ export async function interceptTaskCreate(page: Page) {
   return seen
 }
 
-export function expectBasicAuthHeader(headers: Record<string, string>) {
-  const authorization = headers['authorization']
-  expect(authorization, 'expected Basic auth header on POST /tasks').toBeTruthy()
-  expect(authorization?.startsWith('Basic ')).toBeTruthy()
+export function expectNoPublicAuthHeader(headers: Record<string, string>) {
+  expect(headers['authorization']).toBeFalsy()
 }
 
 async function fulfillJson(route: Route, body: unknown, status = 200) {
