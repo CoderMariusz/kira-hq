@@ -23,7 +23,12 @@ This ADR nails down _who does what_.
 
 ## Decision
 
-Four agent roles, strictly delimited:
+Four agent roles, strictly delimited, and a **TDD pipeline** with
+explicit fail-loops back to implementation. The pipeline follows the
+Hermes `test-driven-development` skill (superpowers lineage): write
+the failing test first, watch it fail, write minimal code to pass,
+review, QA, document, close. No production code without a failing
+test committed first.
 
 | Role                | Agent                           | Model                                             | When                                                                                   |
 |---------------------|---------------------------------|---------------------------------------------------|----------------------------------------------------------------------------------------|

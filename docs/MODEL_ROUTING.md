@@ -13,27 +13,136 @@ Companion to `docs/ADR/0002-model-routing.md`. This is the _how_, not the _why_.
 
 All agents MUST load `kira-hq-task-execution` before starting.
 
-## Per-task pipeline (default flow)
+## Per-task pipeline (TDD, fail-loops back to implementation)
 
-For any T-NN that is not marked "Opus-owned":
+The pipeline is **test-driven**: we write the failing test BEFORE any
+production code. Tests drive the implementation, not the other way
+around. Superpowers-style `test-driven-development` skill is the base;
+each role executes a slice of the RED → GREEN → REFACTOR cycle.
 
-1. **Opus** reads plan.md §Task N + PRD §X.Y; if the task is >150 LOC
-   anticipated, decomposes into subtasks; sets `task-master
-   set-status N in-progress`; runs `render_kanban.py`.
-2. **Qwen** implements each subtask. Receives: plan slice, PRD slice,
-   file slice (line range) or full file if new. Returns: unified diff
-   (for modify) or full file (for new).
-3. **Codex** reviews the Qwen diff. Same call also writes the unit +
-   integration tests against the diff (pytest + bash where relevant).
-   Returns: APPROVE or numbered issues; tests committed alongside the diff.
-4. **Sonnet** runs the full suite: `pytest`, shell smoke, shell integration,
-   real-service integration against localhost uvicorn if the task touches
-   the API, Playwright if the task touches the frontend. Reports
-   red lines with enough context (traceback, last 50 lines of stdout/stderr)
-   back to Opus.
-5. **Opus** on green: `task-master set-status done` + `render_kanban.py`
-   + `git add/commit/push` + `gh run watch`. On red with clear fix →
-   feeds Codex/Qwen. On red with ambiguity → takes over directly.
+Canonical flow (frontend or backend; prototype step only for UI):
+
+```
+           ┌─────────────────────────── Opus ──────────────────────────────┐
+           │ 0. Task intake                                                 │
+           │    - read plan.md §Task N + PRD §X.Y                          │
+           │    - decide: frontend? → need design step?                    │
+           │    - decompose if >150 LOC                                    │
+           │    - task-master set-status N in-progress + render_kanban     │
+           └───────────────────────────┬───────────────────────────────────┘
+                                       │
+                      (FRONTEND only, else skip)
+                                       ▼
+           ┌─────────────────────── Opus (designer) ───────────────────────┐
+           │ 1. Prototype                                                   │
+           │    - frontend/DESIGN.md: page layouts, component tree,         │
+           │      Tailwind tokens, data-testid conventions                  │
+           │    - per-component acceptance criteria (visual + behavioural)  │
+           │    - commit DESIGN.md before any test/impl                     │
+           │    skipped if prototype (screenshot/figma/codepen) supplied    │
+           └───────────────────────────┬───────────────────────────────────┘
+                                       │
+                                       ▼
+           ┌─────────────────────── Codex (test author) ───────────────────┐
+           │ 2. Write RED tests                                             │
+           │    - pytest unit + integration / Playwright / bash shell       │
+           │    - tests must fail for the right reason (feature missing),  │
+           │      not from typos or import errors                           │
+           │    - committed on a separate commit so the RED state is       │
+           │      visible in history                                        │
+           └───────────────────────────┬───────────────────────────────────┘
+                                       │
+                                       ▼
+           ┌────────────────────── Sonnet (runner) ────────────────────────┐
+           │ 3. Verify RED                                                  │
+           │    - runs the new tests                                        │
+           │    - MUST see them fail with the expected message              │
+           │    - passes IMMEDIATELY ⇒ test is wrong ⇒ back to step 2       │
+           └───────────────────────────┬───────────────────────────────────┘
+                                       │
+                                       ▼
+           ┌──────────────────────── Qwen (driver) ────────────────────────┐
+           │ 4. Implementation (minimal code to turn tests GREEN)           │
+           │    - diff-only; only files listed in scope                     │
+           │    - no features beyond the tests                              │
+           │    - fails ⇒ back to this step (counter++)                     │
+           └───────────────────────────┬───────────────────────────────────┘
+                                       │
+                                       ▼
+           ┌────────────────────── Sonnet (runner) ────────────────────────┐
+           │ 5. Run GREEN                                                   │
+           │    - pytest + bash suites + Playwright if UI + curl walk if API│
+           │    - all new tests must PASS                                   │
+           │    - full suite must stay green (no regressions)               │
+           │    FAIL ⇒ back to step 4 (fail-loop)                          │
+           └───────────────────────────┬───────────────────────────────────┘
+                                       │
+                                       ▼
+           ┌─────────────────────── Codex (reviewer) ──────────────────────┐
+           │ 6. Review                                                      │
+           │    - reads Qwen's diff in full on first pass, diff-only after  │
+           │    - PRD coverage, no unrelated files, style, security         │
+           │    - may add missing tests (extend step 2 retroactively)       │
+           │    APPROVE or numbered issues                                  │
+           │    issues ⇒ back to step 4 (fail-loop, counter++)             │
+           └───────────────────────────┬───────────────────────────────────┘
+                                       │
+                                       ▼
+           ┌────────────────────── Sonnet (QA) ────────────────────────────┐
+           │ 7. QA walkthrough vs PRD §6.15 DoD                             │
+           │    - does the user-facing behaviour match what PRD promises?   │
+           │    - for UI: click through real flows, check empty/error/load  │
+           │    - for API: curl the endpoint from a fresh session           │
+           │    FAIL ⇒ back to step 4 (fail-loop, counter++)               │
+           └───────────────────────────┬───────────────────────────────────┘
+                                       │
+                                       ▼
+           ┌──────────────────────── Qwen (docs) ──────────────────────────┐
+           │ 8. Docs                                                        │
+           │    - update module README / changelog entry                    │
+           │    - API endpoints in MODULE_*.md tables                       │
+           │    - frontend: any DESIGN.md deltas from implementation        │
+           └───────────────────────────┬───────────────────────────────────┘
+                                       │
+                                       ▼
+           ┌──────────────────────── Opus (closer) ────────────────────────┐
+           │ 9. Close                                                       │
+           │    - task-master set-status done + render_kanban               │
+           │    - pipeline_log.append_entry per role with token counts      │
+           │    - commit (single or split per role), push                   │
+           │    - gh run watch CI → green or fix-forward                    │
+           └────────────────────────────────────────────────────────────────┘
+```
+
+### Fail-loop counter
+
+Every time a step fails and returns to implementation (step 4), a per-task
+counter increments. When the counter hits **3**, the task escalates to
+Opus automatically — do NOT loop a fourth time. Counter resets on
+task-done, never on role change.
+
+Counted failures:
+- step 3 RED never fires (test is broken) — returns to step 2
+- step 5 GREEN test fails — returns to step 4
+- step 6 review issues — returns to step 4
+- step 7 QA rejects — returns to step 4
+
+Non-counted (these are the system working, not failing):
+- step 3 RED fires correctly (this IS the expected outcome)
+- step 8 docs need polish
+- step 9 CI fails on portability issue (Opus handles directly, see
+  CI portability-lessons memory entry)
+
+### Skipping steps
+
+- **Step 1 (Prototype):** skip for backend-only tasks, or when user
+  supplies a prototype (screenshot / figma / codepen) — then the
+  prototype IS the design spec.
+- **Step 8 (Docs):** skip when diff is <20 LOC and doesn't touch
+  user-visible behaviour.
+- **No other skips.** RED-before-GREEN is iron law per the
+  `test-driven-development` skill. The fail-loop structure means
+  we never write production code without a failing test first.
 
 ## Routing matrix for T-18 … T-25
 
