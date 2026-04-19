@@ -51,3 +51,24 @@ def test_report_handles_missing_log_gracefully(tmp_path):
     assert out["runs"] == 0
     assert out["failures"] == 0
     assert out["items"] == []
+
+
+def test_report_normalizes_naive_and_aware_timestamps(pipeline_log_tmp):
+    pipeline_log_tmp.append(
+        timestamp="2026-04-17T03:00:00",
+        project="p1",
+        skill="x",
+        provider="sonnet",
+        tokens_in=10,
+        tokens_out=20,
+        status="ok",
+        notes="naive row",
+    )
+
+    out = generate_report_json(
+        pipeline_log_tmp.path,
+        since=datetime(2026, 4, 17, 2, 0, 0, tzinfo=timezone.utc),
+    )
+
+    assert out["runs"] == 1
+    assert out["items"][0]["timestamp"] == "2026-04-17T03:00:00"

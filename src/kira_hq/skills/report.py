@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,11 +15,19 @@ def _parse_since(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
+def _normalize_timestamp(value: datetime | str) -> datetime:
+    ts = datetime.fromisoformat(value) if isinstance(value, str) else value
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=UTC)
+    return ts.astimezone(UTC)
+
+
 def generate_report_json(pipeline_log: Path | str, *, since: datetime) -> dict[str, Any]:
     """Return a JSON-serialisable summary of runs since the given timestamp."""
+    since = _normalize_timestamp(since)
     rows = []
     for row in parse_log(pipeline_log):
-        ts = datetime.fromisoformat(row.timestamp)
+        ts = _normalize_timestamp(row.timestamp)
         if ts < since:
             continue
         rows.append({

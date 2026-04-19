@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
@@ -14,14 +14,25 @@ DEFAULT_SNAPSHOTS_DIR = Path.home() / ".kira-hq" / "snapshots"
 DEFAULT_REVIEWS_DIR = Path.home() / ".kira-hq" / "reviews"
 
 
+def _normalize_timestamp(value: datetime | str) -> datetime:
+    ts = datetime.fromisoformat(value) if isinstance(value, str) else value
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=UTC)
+    return ts.astimezone(UTC)
+
+
 def _week_window(now: datetime) -> tuple[datetime, datetime]:
-    start = now - timedelta(days=6)
-    return start.replace(hour=0, minute=0, second=0, microsecond=0), now
+    now = _normalize_timestamp(now)
+    iso_year, iso_week, _ = now.isocalendar()
+    start = datetime.fromisocalendar(iso_year, iso_week, 1).replace(tzinfo=now.tzinfo)
+    end = start + timedelta(days=7)
+    return start, end
 
 
 def _snapshot_days(now: datetime) -> Iterable[str]:
-    for offset in range(6, -1, -1):
-        yield (now - timedelta(days=offset)).date().isoformat()
+    start, _ = _week_window(now)
+    for offset in range(7):
+        yield (start.date() + timedelta(days=offset)).isoformat()
 
 
 def run_weekly_review(
@@ -33,6 +44,7 @@ def run_weekly_review(
     projects_yaml: Path | None,
 ) -> Path:
     del projects_yaml  # reserved for T-24 expansion
+    now = _normalize_timestamp(now)
     pipeline_log = Path(pipeline_log)
     snapshots_dir = Path(snapshots_dir)
     reviews_dir = Path(reviews_dir)
@@ -45,15 +57,16 @@ def run_weekly_review(
     start, end = _week_window(now)
     rows = []
     for row in parse_log(pipeline_log):
-        ts = datetime.fromisoformat(row.timestamp)
-        if start <= ts <= end:
+        ts = _normalize_timestamp(row.timestamp)
+        if start <= ts < end:
             rows.append(row)
 
     top3 = top_n_weekly(week_iso, pipeline_log, n=3)
     projects = sorted({row.project for row in rows})
     snapshot_count = sum(1 for day in _snapshot_days(now) if (snapshots_dir / day).exists())
 
-    lines = [f"# Weekly review {week_iso}", ""]
+    window_label = f"{start.date().isoformat()} to {(end.date() - timedelta(days=1)).isoformat()}"
+    lines = [f"# Weekly review {week_iso}", "", f"Reporting window: {window_label}", ""]
     lines.extend(["## Top-3 token consumers"])
     if top3:
         for project, tokens_in, tokens_out in top3:
