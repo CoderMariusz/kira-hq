@@ -1,13 +1,12 @@
 # kira-hq — Kanban Board
-**Last updated:** 2026-04-19T12:08
-**Total tasks:** 25 | **Done:** 17 | **In progress:** 1 | **Needs attention:** 0
+**Last updated:** 2026-04-19T15:22
+**Total tasks:** 25 | **Done:** 18 | **In progress:** 0 | **Needs attention:** 0
 
 ## 🔴 Wymaga Twojej uwagi (0)
 
 ## ⛔ Blocked (0)
 
-## 🟡 In progress (1)
-- **18** — Module 3 Next.js frontend Phase 3a (localhost:3001) — stage: in-progress — attempt 0/3
+## 🟡 In progress (0)
 
 ## ✅ Done today (0)
 
