@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kira-HQ · Prototype</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            bg:    '#0b0d12',
+            panel: '#11141b',
+            card:  '#161a23',
+            line:  '#242a38',
+            ink:   '#e6e9ef',
+            dim:   '#8a92a6',
+            muted: '#5b6275',
+            high:  '#ff6b6b',
+            med:   '#e2b341',
+            low:   '#6ba3ff',
+            ok:    '#65d38e',
+            warn:  '#e2b341',
+            stop:  '#ff6b6b',
+            accent:'#a285ff',
+          },
+          fontFamily: {
+            mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+            sans: ['Inter', 'system-ui', 'ui-sans-serif', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    html, body { background: #0b0d12; color: #e6e9ef; }
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+    .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #242a38; border-radius: 3px; }
+    .dot { width: 6px; height: 6px; border-radius: 999px; display: inline-block; }
+    /* Fake underline that survives hover */
+    .tab-active { box-shadow: inset 0 -2px 0 0 #a285ff; }
+  </style>
+</head>
+<body class="min-h-screen bg-bg text-ink">
+
+<!-- ============================================================= SIDEBAR -->
+<div class="flex min-h-screen">
+  <aside class="w-60 shrink-0 border-r border-line bg-panel flex flex-col">
+    <div class="px-5 py-4 border-b border-line">
+      <div class="mono text-xs text-dim">kira-hq v0.2</div>
+      <div class="text-lg font-semibold tracking-tight">Kira‑HQ</div>
+    </div>
+
+    <nav class="p-3 flex flex-col gap-1 text-sm" id="nav">
+      <a href="#/"                       class="nav-link px-3 py-2 rounded-md hover:bg-card flex items-center gap-2" data-route="/">         <span class="w-1.5 h-1.5 rounded-full bg-low"></span> Projects</a>
+      <a href="#/views/needs-attention"  class="nav-link px-3 py-2 rounded-md hover:bg-card flex items-center gap-2" data-route="/views/needs-attention"><span class="w-1.5 h-1.5 rounded-full bg-stop"></span> Needs Attention</a>
+      <a href="#/views/blockers"         class="nav-link px-3 py-2 rounded-md hover:bg-card flex items-center gap-2" data-route="/views/blockers"><span class="w-1.5 h-1.5 rounded-full bg-warn"></span> Blockers</a>
+      <a href="#/add"                    class="nav-link px-3 py-2 rounded-md hover:bg-card flex items-center gap-2" data-route="/add">       <span class="w-1.5 h-1.5 rounded-full bg-ok"></span> Add Task</a>
+      <a href="#/hermes"                 class="nav-link px-3 py-2 rounded-md hover:bg-card flex items-center gap-2" data-route="/hermes">    <span class="w-1.5 h-1.5 rounded-full bg-accent"></span> Hermes</a>
+    </nav>
+
+    <div class="mt-auto p-4 border-t border-line text-xs text-dim">
+      <div class="mono">API <span class="text-ok">●</span> :3100</div>
+      <div class="mono">17/25 Faza 2</div>
+    </div>
+  </aside>
+
+  <!-- ===================================================================== MAIN -->
+  <main class="flex-1 min-w-0" id="app"></main>
+</div>
+
+<!-- =============================================================== TEMPLATES -->
+<template id="tpl-projects">
+  <section data-testid="page-projects" class="p-8 max-w-6xl">
+    <div class="flex items-end justify-between mb-6">
+      <div>
+        <h1 class="text-2xl font-semibold">Projects</h1>
+        <p class="text-dim text-sm mt-1">All projects from <span class="mono">~/.kira-hq/projects.yaml</span></p>
+      </div>
+      <div class="flex items-center gap-2">
+        <input type="search" placeholder="filter by name…" class="bg-card border border-line rounded-md px-3 py-1.5 text-sm placeholder:text-muted outline-none focus:border-accent" />
+        <a href="#/add" class="bg-accent text-bg text-sm font-medium px-3 py-1.5 rounded-md hover:opacity-90">+ New task</a>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-testid="project-grid">
+      <!-- CARD -->
+      <a href="#/projects/kira-hq" data-testid="project-card" class="group border border-line rounded-lg bg-card hover:bg-panel hover:border-accent/50 transition p-4 block">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <span class="dot bg-high"></span>
+            <div class="font-semibold">kira-hq</div>
+          </div>
+          <span class="text-[10px] mono px-1.5 py-0.5 rounded border border-line text-dim uppercase">high</span>
+        </div>
+        <div class="mono text-[11px] text-muted mb-3 truncate">~/Projects/kira-hq</div>
+        <div class="flex items-center gap-3 text-xs">
+          <span class="flex items-center gap-1"><span class="dot bg-ok"></span><span class="mono">15</span> done</span>
+          <span class="flex items-center gap-1"><span class="dot bg-warn"></span><span class="mono">1</span> in-progress</span>
+          <span class="flex items-center gap-1"><span class="dot bg-low"></span><span class="mono">9</span> pending</span>
+        </div>
+        <div class="mt-3 h-1 bg-line rounded-full overflow-hidden">
+          <div class="h-full bg-ok" style="width: 60%"></div>
+        </div>
+      </a>
+
+      <a href="#/projects/monopilot" data-testid="project-card" class="group border border-line rounded-lg bg-card hover:bg-panel hover:border-accent/50 transition p-4 block">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <span class="dot bg-high"></span>
+            <div class="font-semibold">monopilot</div>
+          </div>
+          <span class="text-[10px] mono px-1.5 py-0.5 rounded border border-line text-dim uppercase">high</span>
+        </div>
+        <div class="mono text-[11px] text-muted mb-3 truncate">~/Projects/monopilot</div>
+        <div class="flex items-center gap-3 text-xs">
+          <span class="flex items-center gap-1"><span class="dot bg-ok"></span><span class="mono">23</span> done</span>
+          <span class="flex items-center gap-1"><span class="dot bg-stop"></span><span class="mono">2</span> blocked</span>
+          <span class="flex items-center gap-1"><span class="dot bg-low"></span><span class="mono">6</span> pending</span>
+        </div>
+        <div class="mt-3 h-1 bg-line rounded-full overflow-hidden">
+          <div class="h-full bg-ok" style="width: 74%"></div>
+        </div>
+      </a>
+
+      <a href="#/projects/sandbox" data-testid="project-card" class="group border border-line rounded-lg bg-card hover:bg-panel hover:border-accent/50 transition p-4 block">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <span class="dot bg-med"></span>
+            <div class="font-semibold">sandbox</div>
+          </div>
+          <span class="text-[10px] mono px-1.5 py-0.5 rounded border border-line text-dim uppercase">medium</span>
+        </div>
+        <div class="mono text-[11px] text-muted mb-3 truncate">~/Projects/sandbox</div>
+        <div class="flex items-center gap-3 text-xs">
+          <span class="flex items-center gap-1"><span class="dot bg-ok"></span><span class="mono">4</span> done</span>
+          <span class="flex items-center gap-1"><span class="dot bg-low"></span><span class="mono">3</span> pending</span>
+        </div>
+        <div class="mt-3 h-1 bg-line rounded-full overflow-hidden">
+          <div class="h-full bg-ok" style="width: 57%"></div>
+        </div>
+      </a>
+    </div>
+  </section>
+</template>
+
+<template id="tpl-project-detail">
+  <section data-testid="page-project-detail" class="p-8 max-w-7xl">
+    <div class="flex items-end justify-between mb-6">
+      <div>
+        <div class="text-dim text-xs mono mb-1"><a href="#/" class="hover:text-ink">projects</a> / kira-hq</div>
+        <h1 class="text-2xl font-semibold flex items-center gap-3">
+          kira-hq <span class="text-[10px] mono px-1.5 py-0.5 rounded border border-line text-dim uppercase">high</span>
+        </h1>
+        <div class="mono text-xs text-muted mt-1">~/Projects/kira-hq · cron: 0 */2 * * *</div>
+      </div>
+      <div class="flex gap-2">
+        <button class="bg-card border border-line text-sm px-3 py-1.5 rounded-md hover:bg-panel">Render kanban</button>
+        <a href="#/add" class="bg-accent text-bg text-sm font-medium px-3 py-1.5 rounded-md hover:opacity-90">+ New task</a>
+      </div>
+    </div>
+
+    <!-- 4 columns kanban -->
+    <div class="grid grid-cols-4 gap-4" data-testid="kanban">
+      <!-- col: pending -->
+      <div data-testid="kanban-col" data-col="pending">
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-sm font-medium flex items-center gap-2"><span class="dot bg-low"></span> Pending <span class="mono text-xs text-muted">9</span></div>
+        </div>
+        <div class="flex flex-col gap-2 pb-2 pr-1 max-h-[70vh] overflow-y-auto scrollbar-thin">
+          <article data-testid="task-card" class="border border-line rounded-md bg-card p-3 hover:border-accent/40 cursor-pointer">
+            <div class="flex items-center justify-between mb-1">
+              <span class="mono text-[10px] text-dim">T-18</span>
+              <span class="text-[10px] mono px-1.5 rounded border border-line text-high">HIGH</span>
+            </div>
+            <div class="text-sm leading-snug">Next.js frontend — phase 3a</div>
+            <div class="mono text-[10px] text-muted mt-1">deps: T-17</div>
+          </article>
+          <article data-testid="task-card" class="border border-line rounded-md bg-card p-3 hover:border-accent/40 cursor-pointer">
+            <div class="flex items-center justify-between mb-1">
+              <span class="mono text-[10px] text-dim">T-19</span>
+              <span class="text-[10px] mono px-1.5 rounded border border-line text-med">MED</span>
+            </div>
+            <div class="text-sm leading-snug">Module 2 polish — add-project CLI</div>
+          </article>
+          <article data-testid="task-card" class="border border-line rounded-md bg-card p-3 hover:border-accent/40 cursor-pointer">
+            <div class="flex items-center justify-between mb-1">
+              <span class="mono text-[10px] text-dim">T-20</span>
+              <span class="text-[10px] mono px-1.5 rounded border border-line text-med">MED</span>
+            </div>
+            <div class="text-sm leading-snug">Hermes skill registration</div>
+          </article>
+        </div>
+      </div>
+
+      <!-- col: in-progress -->
+      <div data-testid="kanban-col" data-col="in-progress">
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-sm font-medium flex items-center gap-2"><span class="dot bg-warn"></span> In&nbsp;progress <span class="mono text-xs text-muted">1</span></div>
+        </div>
+        <div class="flex flex-col gap-2">
+          <article data-testid="task-card" class="border border-accent rounded-md bg-panel p-3 cursor-pointer">
+            <div class="flex items-center justify-between mb-1">
+              <span class="mono text-[10px] text-dim">T-18</span>
+              <span class="text-[10px] mono px-1.5 rounded border border-line text-high">HIGH</span>
+            </div>
+            <div class="text-sm leading-snug">Next.js frontend — phase 3a</div>
+            <div class="mono text-[10px] text-accent mt-1">running · started 14:02</div>
+          </article>
+        </div>
+      </div>
+
+      <!-- col: blocked -->
+      <div data-testid="kanban-col" data-col="blocked">
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-sm font-medium flex items-center gap-2"><span class="dot bg-stop"></span> Blocked <span class="mono text-xs text-muted">0</span></div>
+        </div>
+        <div class="flex flex-col gap-2 text-xs text-muted italic">—</div>
+      </div>
+
+      <!-- col: done -->
+      <div data-testid="kanban-col" data-col="done">
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-sm font-medium flex items-center gap-2"><span class="dot bg-ok"></span> Done <span class="mono text-xs text-muted">15</span></div>
+        </div>
+        <div class="flex flex-col gap-2 max-h-[70vh] overflow-y-auto pr-1 scrollbar-thin">
+          <article data-testid="task-card" class="border border-line rounded-md bg-card p-3 opacity-80">
+            <div class="flex items-center justify-between mb-1">
+              <span class="mono text-[10px] text-dim">T-17</span>
+              <span class="text-[10px] mono px-1.5 rounded border border-line text-dim">HIGH</span>
+            </div>
+            <div class="text-sm leading-snug line-through decoration-muted">HTTPBasic auth gate</div>
+          </article>
+          <article data-testid="task-card" class="border border-line rounded-md bg-card p-3 opacity-80">
+            <div class="flex items-center justify-between mb-1">
+              <span class="mono text-[10px] text-dim">T-16</span>
+              <span class="text-[10px] mono px-1.5 rounded border border-line text-dim">HIGH</span>
+            </div>
+            <div class="text-sm leading-snug line-through decoration-muted">FastAPI Module 2</div>
+          </article>
+          <article data-testid="task-card" class="border border-line rounded-md bg-card p-3 opacity-80">
+            <div class="flex items-center justify-between mb-1">
+              <span class="mono text-[10px] text-dim">T-15</span>
+              <span class="text-[10px] mono px-1.5 rounded border border-line text-dim">MED</span>
+            </div>
+            <div class="text-sm leading-snug line-through decoration-muted">CI workflows</div>
+          </article>
+        </div>
+      </div>
+    </div>
+  </section>
+</template>
+
+<template id="tpl-needs-attention">
+  <section data-testid="page-needs-attention" class="p-8 max-w-5xl">
+    <div class="flex items-end justify-between mb-6">
+      <div>
+        <h1 class="text-2xl font-semibold">Needs Attention</h1>
+        <p class="text-dim text-sm mt-1">Generated <span class="mono">2026-04-19T14:05:00</span> · PRD §6.10</p>
+      </div>
+    </div>
+
+    <div class="space-y-6">
+      <div data-testid="section-blocked">
+        <h2 class="text-sm font-medium flex items-center gap-2 mb-2"><span class="dot bg-stop"></span> Blocked &gt; 48h <span class="mono text-xs text-muted">(2)</span></h2>
+        <div class="border border-line rounded-md bg-card divide-y divide-line">
+          <div data-testid="attention-item" class="p-3 flex items-center gap-3">
+            <span class="mono text-[10px] text-dim w-20">monopilot</span>
+            <span class="mono text-[10px] text-dim w-14">T-12</span>
+            <span class="flex-1 text-sm">Setup Stripe webhook — blocked by T-08</span>
+            <span class="mono text-xs text-stop">67h</span>
+          </div>
+          <div data-testid="attention-item" class="p-3 flex items-center gap-3">
+            <span class="mono text-[10px] text-dim w-20">monopilot</span>
+            <span class="mono text-[10px] text-dim w-14">T-14</span>
+            <span class="flex-1 text-sm">Refactor checkout flow — blocked by T-12</span>
+            <span class="mono text-xs text-stop">54h</span>
+          </div>
+        </div>
+      </div>
+
+      <div data-testid="section-stale">
+        <h2 class="text-sm font-medium flex items-center gap-2 mb-2"><span class="dot bg-warn"></span> High-prio stale &gt; 72h <span class="mono text-xs text-muted">(1)</span></h2>
+        <div class="border border-line rounded-md bg-card divide-y divide-line">
+          <div data-testid="attention-item" class="p-3 flex items-center gap-3">
+            <span class="mono text-[10px] text-dim w-20">sandbox</span>
+            <span class="mono text-[10px] text-dim w-14">T-3</span>
+            <span class="flex-1 text-sm">Probe Qwen on OpenRouter</span>
+            <span class="mono text-xs text-warn">81h</span>
+          </div>
+        </div>
+      </div>
+
+      <div data-testid="section-failed">
+        <h2 class="text-sm font-medium flex items-center gap-2 mb-2"><span class="dot bg-high"></span> Failed crons &lt; 24h <span class="mono text-xs text-muted">(1)</span></h2>
+        <div class="border border-line rounded-md bg-card divide-y divide-line">
+          <div data-testid="attention-item" class="p-3 flex items-center gap-3">
+            <span class="mono text-[10px] text-dim w-20">monopilot</span>
+            <span class="mono text-[10px] text-dim w-32 truncate">night-crew</span>
+            <span class="flex-1 text-sm">Timed out after 180s — see incident 2026-04-19T030014</span>
+            <span class="mono text-xs text-high">03:00</span>
+          </div>
+        </div>
+      </div>
+
+      <div data-testid="section-budget">
+        <h2 class="text-sm font-medium flex items-center gap-2 mb-2"><span class="dot bg-accent"></span> Budget exceeded <span class="mono text-xs text-muted">(0)</span></h2>
+        <div class="text-xs text-muted italic border border-line rounded-md bg-card p-3">Within monthly token budget for all projects.</div>
+      </div>
+    </div>
+  </section>
+</template>
+
+<template id="tpl-blockers">
+  <section data-testid="page-blockers" class="p-8 max-w-5xl">
+    <div class="flex items-end justify-between mb-6">
+      <div>
+        <h1 class="text-2xl font-semibold">Blockers</h1>
+        <p class="text-dim text-sm mt-1">All <span class="mono">status: blocked</span> tasks across active projects</p>
+      </div>
+    </div>
+
+    <div class="border border-line rounded-md bg-card overflow-hidden">
+      <table class="w-full text-sm" data-testid="blockers-table">
+        <thead class="text-[11px] mono uppercase text-muted bg-panel">
+          <tr>
+            <th class="text-left px-3 py-2">Project</th>
+            <th class="text-left px-3 py-2">ID</th>
+            <th class="text-left px-3 py-2">Title</th>
+            <th class="text-left px-3 py-2">Priority</th>
+            <th class="text-left px-3 py-2">Deps</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-line">
+          <tr data-testid="blocker-row" class="hover:bg-panel">
+            <td class="px-3 py-2 mono text-xs">monopilot</td>
+            <td class="px-3 py-2 mono text-xs">T-12</td>
+            <td class="px-3 py-2">Setup Stripe webhook</td>
+            <td class="px-3 py-2"><span class="mono text-[10px] text-high">HIGH</span></td>
+            <td class="px-3 py-2 mono text-xs text-muted">T-8</td>
+          </tr>
+          <tr data-testid="blocker-row" class="hover:bg-panel">
+            <td class="px-3 py-2 mono text-xs">monopilot</td>
+            <td class="px-3 py-2 mono text-xs">T-14</td>
+            <td class="px-3 py-2">Refactor checkout flow</td>
+            <td class="px-3 py-2"><span class="mono text-[10px] text-med">MED</span></td>
+            <td class="px-3 py-2 mono text-xs text-muted">T-12</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</template>
+
+<template id="tpl-add">
+  <section data-testid="page-add" class="p-8 max-w-2xl">
+    <h1 class="text-2xl font-semibold mb-6">Add Task</h1>
+    <form data-testid="add-form" class="border border-line rounded-md bg-card p-5 space-y-4">
+      <div>
+        <label class="block text-xs mono text-dim mb-1" for="f-project">Project</label>
+        <select id="f-project" data-testid="f-project" class="w-full bg-panel border border-line rounded-md px-3 py-2 text-sm">
+          <option>kira-hq</option>
+          <option>monopilot</option>
+          <option>sandbox</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs mono text-dim mb-1" for="f-title">Title</label>
+        <input id="f-title" data-testid="f-title" class="w-full bg-panel border border-line rounded-md px-3 py-2 text-sm outline-none focus:border-accent" placeholder="Short imperative…" />
+      </div>
+      <div>
+        <label class="block text-xs mono text-dim mb-1" for="f-desc">Description</label>
+        <textarea id="f-desc" data-testid="f-desc" rows="4" class="w-full bg-panel border border-line rounded-md px-3 py-2 text-sm outline-none focus:border-accent" placeholder="Longer notes, context, links…"></textarea>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs mono text-dim mb-1" for="f-priority">Priority</label>
+          <select id="f-priority" data-testid="f-priority" class="w-full bg-panel border border-line rounded-md px-3 py-2 text-sm">
+            <option value="high">high</option>
+            <option value="medium" selected>medium</option>
+            <option value="low">low</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs mono text-dim mb-1" for="f-parent">Parent task (optional)</label>
+          <input id="f-parent" data-testid="f-parent" class="w-full bg-panel border border-line rounded-md px-3 py-2 text-sm outline-none focus:border-accent" placeholder="e.g. T-12" />
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 pt-2">
+        <a href="#/" class="text-sm text-dim hover:text-ink px-3 py-2">Cancel</a>
+        <button type="button" data-testid="f-submit" class="bg-accent text-bg text-sm font-medium px-4 py-2 rounded-md hover:opacity-90">Create</button>
+      </div>
+    </form>
+  </section>
+</template>
+
+<template id="tpl-hermes">
+  <section data-testid="page-hermes" class="p-8 max-w-6xl">
+    <div class="flex items-end justify-between mb-4">
+      <div>
+        <h1 class="text-2xl font-semibold">Hermes</h1>
+        <p class="text-dim text-sm mt-1">Embedded dashboard · <span class="mono">iframe → $HERMES_URL</span></p>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] mono px-1.5 py-0.5 rounded border border-line text-dim">NEXT_PUBLIC_HERMES_URL</span>
+        <a href="http://localhost:4000" target="_blank" rel="noopener noreferrer"
+           data-testid="hermes-popout"
+           class="text-xs mono px-2 py-1 rounded border border-line hover:border-accent hover:text-accent flex items-center gap-1">
+          ⧉ Open in new window
+        </a>
+      </div>
+    </div>
+
+    <div data-testid="hermes-iframe-wrapper" class="border border-line rounded-md bg-card aspect-[16/9] w-full flex items-center justify-center text-muted relative">
+      <div class="text-center">
+        <div class="mono text-xs mb-2">&lt;iframe src="http://localhost:4000"&gt;</div>
+        <div class="text-sm">Hermes dashboard loads here when running.</div>
+        <div class="text-xs mt-1 opacity-70">(Placeholder — real iframe uses env var in Module 3)</div>
+        <div class="text-[11px] mt-3 text-dim">
+          Fallback: if Hermes blocks embedding (CSP/X-Frame-Options),<br>
+          UI auto-shows <span class="mono">⧉ Open in new window</span> button above.
+        </div>
+      </div>
+    </div>
+  </section>
+</template>
+
+<script>
+  const routes = {
+    '/'                         : 'tpl-projects',
+    '/projects/kira-hq'         : 'tpl-project-detail',
+    '/projects/monopilot'       : 'tpl-project-detail',
+    '/projects/sandbox'         : 'tpl-project-detail',
+    '/views/needs-attention'    : 'tpl-needs-attention',
+    '/views/blockers'           : 'tpl-blockers',
+    '/add'                      : 'tpl-add',
+    '/hermes'                   : 'tpl-hermes',
+  };
+
+  function render() {
+    const hash = (location.hash || '#/').slice(1);
+    const tpl = document.getElementById(routes[hash] || 'tpl-projects');
+    const app = document.getElementById('app');
+    app.innerHTML = '';
+    app.appendChild(tpl.content.cloneNode(true));
+
+    // Highlight active nav
+    document.querySelectorAll('#nav .nav-link').forEach(el => {
+      const r = el.getAttribute('data-route');
+      const active = hash === r || (r !== '/' && hash.startsWith(r));
+      el.classList.toggle('bg-card', !!active);
+      el.classList.toggle('tab-active', !!active);
+    });
+  }
+
+  window.addEventListener('hashchange', render);
+  window.addEventListener('DOMContentLoaded', render);
+</script>
+</body>
+</html>

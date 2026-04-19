@@ -1,17 +1,17 @@
 # kira-hq — Kanban Board
-**Last updated:** 2026-04-19T09:35
-**Total tasks:** 25 | **Done:** 17 | **In progress:** 0 | **Needs attention:** 0
+**Last updated:** 2026-04-19T12:08
+**Total tasks:** 25 | **Done:** 17 | **In progress:** 1 | **Needs attention:** 0
 
 ## 🔴 Wymaga Twojej uwagi (0)
 
 ## ⛔ Blocked (0)
 
-## 🟡 In progress (0)
+## 🟡 In progress (1)
+- **18** — Module 3 Next.js frontend Phase 3a (localhost:3001) — stage: in-progress — attempt 0/3
 
 ## ✅ Done today (0)
 
-## 📥 Backlog (8)
-- **18** — Module 3 Next.js frontend Phase 3a (localhost:3001) — priority: high — deps: [16] — Dashboard pages + Playwright E2E matching PRD §6.15 scenario exactly.
+## 📥 Backlog (7)
 - **20** — Module 4 Hermes skills: report + weekly-review + add-project — priority: high — deps: [7,8,12,16] — Skills consumable by Hermes scheduler + manual Claude invocation.
 - **21** — Module 4 Telegram commands: /status /blockers /add /fix /review /unstale — priority: high — deps: [4,11,16,20,24] — 6 command handlers with chat-ID allow-list.
 - **22** — Parallel track harness: Path A (Hermes) vs Path B (Claude Code) — priority: high — deps: [1,11] — Dual cron paths + weekly comparator + ADR 0002 placeholder.
@@ -22,6 +22,7 @@
 
 ## 🐛 Fixes reported (0)
 
-## 📚 ADRs — last 1 (of 1 total)
+## 📚 ADRs — last 2 (of 2 total)
 
+- **0002** — [Four-agent model routing](docs/ADR/0002-model-routing.md) — accepted — 2026-04-19
 - **0001** — [Use FastAPI (not Flask) for Module 2](docs/ADR/0001-use-fastapi-not-flask.md) — accepted — 2026-04-16
