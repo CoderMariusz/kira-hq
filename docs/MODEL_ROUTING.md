@@ -60,12 +60,19 @@ Canonical flow (frontend or backend; prototype step only for UI):
                       (FRONTEND only, else skip)
                                        ▼
            ┌─────────────────────── Opus (designer) ───────────────────────┐
-           │ 1. Prototype                                                   │
-           │    - frontend/DESIGN.md: page layouts, component tree,         │
-           │      Tailwind tokens, data-testid conventions                  │
-           │    - per-component acceptance criteria (visual + behavioural)  │
-           │    - commit DESIGN.md before any test/impl                     │
-           │    skipped if prototype (screenshot/figma/codepen) supplied    │
+           │ 1. Clickable prototype (interactive HTML)                      │
+           │    - frontend/prototype.html: single-file, self-contained,     │
+           │      Tailwind CDN, hash-router between pages, realistic mock   │
+           │      data matching API response shapes, data-testid attrs     │
+           │      that Playwright RED specs will query in step 2            │
+           │    - MUST be openable with `open frontend/prototype.html`      │
+           │      (macOS) or double-click — NO build step, NO npm           │
+           │    - Opus captures 1440×900 screenshots per page (Playwright   │
+           │      chromium headless) and attaches them to the handoff       │
+           │    - **USER ACCEPT required before step 2** — if user rejects, │
+           │      iterate the prototype, NOT the tests                      │
+           │    - skipped if the user supplies a prototype (screenshot /   │
+           │      figma / codepen) — that IS the step 1 output              │
            └───────────────────────────┬───────────────────────────────────┘
                                        │
                                        ▼
