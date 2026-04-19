@@ -26,11 +26,28 @@ HEADER = (
 
 
 def _format_value(key: str, value: object) -> str:
+    """Render a cell value for the markdown table.
+
+    CRITICAL: Escapes `|` so free-form fields (especially `notes`, and
+    anything a future caller might drop in) can't break the 10-column
+    layout. Raw `|` inside a cell splits the row, which
+    `kira_hq.tokens.parse_log` then rejects as malformed — silently
+    losing token rollups and needs-attention signals.
+
+    Also normalises newlines (GFM table cells cannot contain literal
+    newlines; replace with a visible `↵` marker so grep still finds
+    them).
+    """
     if key == "expand_used":
         return "true" if bool(value) else "false"
     if value is None:
         return ""
-    return str(value)
+    s = str(value)
+    # GFM escape for pipe inside a table cell
+    s = s.replace("|", r"\|")
+    # Collapse newlines / CR — tables can't span lines
+    s = s.replace("\r\n", " ↵ ").replace("\n", " ↵ ").replace("\r", " ↵ ")
+    return s
 
 
 def append_entry(

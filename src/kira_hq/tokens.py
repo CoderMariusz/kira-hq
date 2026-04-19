@@ -62,8 +62,12 @@ def _split_row(line: str) -> Optional[List[str]]:
         return None
     if _SEPARATOR_RE.match(line):
         return None
-    # strip leading/trailing "|" then split — whitespace-trim each cell
-    cells = [c.strip() for c in line[1:-1].split("|")]
+    # Split on unescaped pipes only (`\|` is a literal pipe in a GFM cell).
+    # Use a negative-lookbehind regex: split at "|" not preceded by "\".
+    # Then un-escape "\|" → "|" in each cell and strip whitespace.
+    inner = line[1:-1]
+    parts = re.split(r"(?<!\\)\|", inner)
+    cells = [p.replace(r"\|", "|").strip() for p in parts]
     return cells
 
 

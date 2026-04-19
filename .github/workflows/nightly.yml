@@ -30,7 +30,7 @@ jobs:
       - name: Install Python deps
         run: |
           uv venv --python 3.12
-          uv pip install pyyaml pydantic pytest playwright
+          uv pip install -e . pytest playwright
 
       - name: Install task-master-ai (pinned)
         run: |

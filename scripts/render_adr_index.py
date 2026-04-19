@@ -22,6 +22,7 @@ Public API (importable):
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -125,6 +126,16 @@ def collect(adr_dir: Path) -> List[ADR]:
 
 
 def _render_table(adrs: List[ADR], relative_to: Optional[Path] = None) -> str:
+    """Render ADRs as a markdown table.
+
+    `relative_to` controls how link paths are emitted:
+      - Path given → `adr.path.relative_to(relative_to)` (fallback: os.path.relpath)
+      - None       → `os.path.relpath(adr.path, cwd)`, i.e. full navigable path
+        from the caller's working directory. Previously this fell back to
+        `adr.path.name`, which broke global-adrs.md links (PR#1 P2 review):
+        the bare filename resolved relative to `~/.kira-hq/`, not to the
+        owning project's `docs/ADR/` directory.
+    """
     lines = [
         "| #    | Title | Status | Date       |",
         "|------|-------|--------|------------|",
@@ -134,9 +145,11 @@ def _render_table(adrs: List[ADR], relative_to: Optional[Path] = None) -> str:
             try:
                 link = adr.path.relative_to(relative_to)
             except ValueError:
-                link = adr.path
+                # adr.path is not a descendant of relative_to — fall back to
+                # a real relative path computation (works across drives/mounts)
+                link = Path(os.path.relpath(adr.path, relative_to))
         else:
-            link = adr.path.name
+            link = adr.path  # absolute path — always resolvable
         title_cell = f"[{adr.title}]({link})"
         lines.append(
             f"| {adr.number_str} | {title_cell} | {adr.status} | {adr.date} |"
@@ -165,6 +178,8 @@ def render_global(
     out_path: Path = GLOBAL_ADRS,
 ) -> Path:
     doc = load(projects_yaml)
+    out_path = Path(out_path).expanduser()
+    out_dir = out_path.parent
     chunks: List[str] = ["# Global ADRs\n\nAggregated across all active projects. PRD §6.8.\n"]
     for entry in doc.projects:
         if entry.status == "archived":
@@ -176,8 +191,10 @@ def render_global(
         if not adrs:
             continue
         chunks.append(f"\n## {entry.name}\n")
-        chunks.append(_render_table(adrs, relative_to=None))
-    out_path = Path(out_path).expanduser()
+        # Emit links relative to the GLOBAL file's directory, so clicking them
+        # in `~/.kira-hq/global-adrs.md` navigates to the project's ADR dir.
+        # `out_dir` may not be an ancestor of `adr_dir` → use os.path.relpath.
+        chunks.append(_render_table(adrs, relative_to=out_dir))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("".join(chunks))
     return out_path

@@ -66,3 +66,48 @@ def test_schema_has_10_columns():
     header_line = HEADER.split("\n")[0]
     cells = [c for c in header_line.split("|") if c.strip()]
     assert len(cells) == 10
+
+
+def test_pipe_in_notes_escaped_roundtrip(tmp_path):
+    """Regression: free-form `notes` containing `|` must NOT split the row.
+
+    PR#1 P2 review: raw `|` in a cell created extra columns, which
+    `tokens.parse_log` dropped silently (len(cells) != 10), losing data.
+    Fix escapes as `\\|` on write and un-escapes on parse.
+    """
+    from kira_hq.tokens import parse_log  # late import
+
+    p = tmp_path / "pipeline.log.md"
+    tricky = "task #5 | fell back to sonnet | retry=2"
+    append_entry(
+        p, timestamp="2026-04-19T10:00:00", project="kira-hq",
+        skill="test", provider="sonnet", expand_used=False,
+        tokens_in=123, tokens_out=45, status="ok", duration_s=1.0,
+        notes=tricky,
+    )
+    # 1. Raw file keeps each row as one line; 2 pipes in `notes` are escaped
+    line = [ln for ln in p.read_text().splitlines() if "task #5" in ln][0]
+    assert line.count(r"\|") == 2  # the two `|` inside notes got escaped
+    # Subtract escaped pipes to get real column boundaries
+    real_pipes = line.count("|") - line.count(r"\|")
+    assert real_pipes == 11  # 10 cells → 11 real pipes
+    # 2. Parser round-trips the original notes
+    rows = parse_log(p)
+    assert len(rows) == 1
+    assert rows[0].tokens_in == 123
+    assert rows[0].notes == tricky
+
+
+def test_newline_in_notes_does_not_break_table(tmp_path):
+    """Regression: notes with literal \\n must not span table rows."""
+    from kira_hq.tokens import parse_log
+
+    p = tmp_path / "log.md"
+    append_entry(
+        p, timestamp="2026-04-19T10:00:00", project="x", skill="s",
+        provider="sonnet", expand_used=False, tokens_in=1, tokens_out=1,
+        status="ok", duration_s=0.1, notes="line1\nline2",
+    )
+    rows = parse_log(p)
+    assert len(rows) == 1
+    assert "↵" in rows[0].notes

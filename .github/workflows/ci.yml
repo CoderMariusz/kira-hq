@@ -35,8 +35,9 @@ jobs:
       - name: Install Python deps
         run: |
           uv venv --python ${{ matrix.python-version }}
-          # Runtime deps + test tooling (pyproject has pyyaml only).
-          uv pip install pyyaml pydantic pytest
+          # Install package (pulls pyyaml/pydantic/fastapi/uvicorn/httpx
+          # from [project.dependencies]) + test tooling.
+          uv pip install -e . pytest
 
       - name: Show environment
         run: |

@@ -150,3 +150,44 @@ def test_render_global_skips_archived(tmp_path):
     out = render_global(yaml_path, tmp_path / "global-adrs.md")
     assert "Should not appear" not in out.read_text()
     assert "## archived-proj" not in out.read_text()
+
+
+def test_render_global_links_are_navigable_from_out_dir(tmp_path):
+    """PR#1 P2 regression: global-adrs.md must link each ADR via a path that
+    resolves, not via the bare filename."""
+    proj = tmp_path / "alpha"
+    adr_dir = proj / "docs" / "ADR"
+    adr_dir.mkdir(parents=True)
+    _write_adr(adr_dir, 1, "Use FastAPI")
+
+    yaml_path = tmp_path / "projects.yaml"
+    yaml_path.write_text(yaml.safe_dump({
+        "version": 2,
+        "projects": [{
+            "name": "alpha", "path": str(proj), "status": "active",
+            "priority": "high", "cron": "0 */2 * * *",
+            "added_at": "2026-04-18",
+            "skills": ["kira-hq-render-kanban"],
+            "budget_tokens_monthly": 500_000, "budget_tokens_per_run": 50_000,
+        }],
+    }))
+
+    # Place global-adrs.md in a neutral dir that is NOT an ancestor of adr_dir
+    global_dir = tmp_path / "global-home"
+    global_dir.mkdir()
+    out = render_global(yaml_path, global_dir / "global-adrs.md")
+    content = out.read_text()
+
+    # Extract the markdown link target for "Use FastAPI"
+    import re
+    m = re.search(r"\[Use FastAPI\]\(([^)]+)\)", content)
+    assert m, f"link for Use FastAPI not found in: {content}"
+    link = m.group(1)
+
+    # Resolve the link relative to the global-adrs.md directory and verify
+    # it points to the actual ADR file on disk.
+    resolved = (global_dir / link).resolve()
+    expected = (adr_dir / "0001-use-fastapi.md").resolve()
+    assert resolved == expected, f"link {link!r} → {resolved} != {expected}"
+    # Must NOT be just the bare filename (the old broken behaviour).
+    assert link != "0001-use-fastapi.md"
