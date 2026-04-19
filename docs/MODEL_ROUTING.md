@@ -13,6 +13,32 @@ Companion to `docs/ADR/0002-model-routing.md`. This is the _how_, not the _why_.
 
 All agents MUST load `kira-hq-task-execution` before starting.
 
+## Foundation skills (load alongside kira-hq-task-execution)
+
+These are the superpowers-lineage skills (`adapted from obra/superpowers
++ MorAlekss`) that underpin the pipeline. Every agent should understand
+them; they are NOT duplicated into `~/.kira-hq/skills-shared/` because
+they live in the global `~/.hermes/skills/software-development/` and
+apply to every project.
+
+| Skill                          | Used by           | Pipeline step |
+|--------------------------------|-------------------|---------------|
+| `test-driven-development`      | Codex, Qwen, Sonnet, Opus | 2, 3, 4, 5    |
+| `requesting-code-review`       | Codex, Sonnet, Opus | 6 (and self-review checks across all steps) |
+| `subagent-driven-development`  | Opus              | 0 (decompose), 9 (two-stage review close) |
+| `systematic-debugging`         | Opus              | triple-fail handler |
+| `writing-plans`                | Opus              | 0 (decompose >150 LOC) |
+
+Kira-HQ-specific skills (live in `~/.kira-hq/skills-shared/`):
+
+| Skill                       | Used by | Purpose                                  |
+|-----------------------------|---------|------------------------------------------|
+| `kira-hq-task-execution`    | all     | Task contract + routing quick-ref        |
+| `kira-hq-render-kanban`     | Opus    | Kanban render (steps 0 and 9)            |
+| `kira-hq-execute`           | Opus    | Task dispatch                            |
+| `prd-decompose-hybrid`      | Opus    | Turn PRD → plan.md                       |
+| `kira-add-project` / `kira-archive-project` | user | Project lifecycle CLI     |
+
 ## Per-task pipeline (TDD, fail-loops back to implementation)
 
 The pipeline is **test-driven**: we write the failing test BEFORE any
@@ -143,6 +169,61 @@ Non-counted (these are the system working, not failing):
 - **No other skips.** RED-before-GREEN is iron law per the
   `test-driven-development` skill. The fail-loop structure means
   we never write production code without a failing test first.
+
+## Pre-handoff self-review (mandatory per role)
+
+Every role, before passing work to the next step, runs a self-review
+checklist. This is NOT the independent review (that's Codex step 6
+and Sonnet step 7) — it's a pre-handoff sanity check from the
+`requesting-code-review` skill Step 4. Purpose: catch obvious slop
+before spending tokens on the next role.
+
+**Codex self-review before handing RED tests to Sonnet (after step 2):**
+- [ ] Every new test has a clear name describing behaviour
+- [ ] Each test actually asserts the wished-for behaviour (not mock interactions)
+- [ ] Tests do NOT reference implementation files that don't exist yet
+  (imports of future functions should be guarded or explicit)
+- [ ] No `assert True` / `pytest.skip` masking
+- [ ] Tests would fail for the right reason (the feature is missing),
+  not from typos or import errors
+- [ ] Tests committed on a RED-state commit so history shows failure
+
+**Qwen self-review before handing implementation to Sonnet (after step 4):**
+- [ ] Only files in declared scope touched — `git status` confirms
+- [ ] Diff is minimal — no extra features, no "while I was there" changes
+- [ ] No hardcoded secrets, no `shell=True`, no `os.system(f"...")`
+- [ ] No `eval`/`exec`/`pickle.loads` on external input
+- [ ] Error handling on I/O / subprocess / network calls
+- [ ] No debug `print` / `console.log` left behind
+- [ ] No commented-out code
+- [ ] RED tests from step 2 now pass locally
+- [ ] Full suite still passes (no regressions) — run it before handoff
+
+**Codex self-review before finishing review (after step 6):**
+- [ ] Re-read the full diff once — any issue missed on first pass?
+- [ ] Review covered all mechanical checks: PRD coverage, unrelated
+  files, style, security (Step 2/3 checks from requesting-code-review)
+- [ ] Issues list has actionable, specific, numbered items (not vague)
+- [ ] Any test the review reveals is missing → added in this pass,
+  not deferred
+
+**Sonnet self-review before reporting RED/GREEN/QA result:**
+- [ ] Actually ran the command, not guessed the output
+- [ ] Captured failing test names + last 50 lines of stderr
+- [ ] If RED: distinguish "fails for right reason" vs "fails from typo"
+- [ ] If GREEN: full suite, not just the new tests
+- [ ] If QA: compared behaviour to PRD §6.15 DoD line-by-line, not a gut feel
+
+**Opus self-review before closing (after step 9):**
+- [ ] task-master state = done, kanban rendered
+- [ ] pipeline_log row appended with correct provider + token count
+- [ ] Commit message describes what shipped (not "fix stuff")
+- [ ] CI green OR portability fix clearly applied
+- [ ] Any deliberate deviations from plan.md listed in commit body
+
+**Self-review failures stay inside the role.** They don't count against
+the fail-loop counter — they only fire between step 4→5 and before
+any handoff. Only when another role rejects does the counter increment.
 
 ## Routing matrix for T-18 … T-25
 
