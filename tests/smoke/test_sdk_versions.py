@@ -136,6 +136,21 @@ def test_installed_version_matches_pin(pins, pkg):
             pytest.skip(f"{probe['cmd'][0]} not on PATH in this env")
         installed = _probe_cli(probe["cmd"])
     elif probe["kind"] == "bundled":
+        # Skip if the host package isn't installed in this env (e.g. ci.yml
+        # doesn't ship task-master-ai; only nightly.yml does). Probe the host
+        # via node's module resolver before attempting the bundled lookup.
+        host = probe["host_pkg"]
+        host_check = subprocess.run(
+            ["node", "-e",
+             f'try {{ require.resolve("{host}/package.json", {{ paths: ['
+             '"/opt/homebrew/lib/node_modules",'
+             '"/usr/local/lib/node_modules",'
+             'require("os").homedir()+"/.nvm/versions/node"'
+             f'] }}); }} catch (e) {{ process.exit(2); }}'],
+            capture_output=True, text=True, timeout=15,
+        )
+        if host_check.returncode != 0 and shutil.which(host.replace("-ai", "")) is None:
+            pytest.skip(f"{host} not installed in this env (CI without nightly toolchain)")
         installed = _probe_bundled(probe["host_pkg"], probe["sub_pkg"])
     else:
         pytest.fail(f"unknown probe kind for {pkg}")
