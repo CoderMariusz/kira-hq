@@ -1,0 +1,330 @@
+{
+  "tags": {
+    "master": {
+      "tasks": [
+        {
+          "id": 1,
+          "title": "Pipeline log schema + writer",
+          "description": "Markdown-table pipeline log per-project + global aggregate with append-only writer.",
+          "details": "PRD \u00a76.1. Implement src/kira_hq/pipeline_log.py with append_entry(path, timestamp, project, skill, tokens_in, tokens_out, status, duration_s, notes). Auto-writes header on first append. Per-project ~/Projects/<p>/pipeline.log.md plus ~/.kira-hq/global-pipeline.log.md aggregate. Exposed via Module 2 GET /metrics/pipeline?since=... Format matches PRD byte-for-byte (same column order and widths).",
+          "testStrategy": "Smoke: tests/smoke/test_pipeline_log.py asserts single append yields header + row. Integration: multi-project writes aggregate correctly. Verify column ordering vs PRD \u00a76.1 sample.",
+          "priority": "high",
+          "dependencies": [],
+          "status": "pending"
+        },
+        {
+          "id": 2,
+          "title": "Token tracking: daily roll-up + weekly top-3 + budget alerts",
+          "description": "Aggregate tokens_in/out from pipeline log into daily JSON + weekly top-N + per-run budget check.",
+          "details": "PRD \u00a76.2. Tracks tokens NOT $. Daily file ~/.kira-hq/metrics/tokens-YYYY-MM-DD.json. Weekly top-3 consumers for kira-weekly-review. Per-run budget breach returns bool consumed by Telegram alert pipeline.",
+          "testStrategy": "Smoke: rollup_day produces correct aggregation. Integration: 7 days of mock pipeline log produce correct weekly top-3 + W-o-W delta. Budget alert path exercised.",
+          "priority": "high",
+          "dependencies": [
+            1
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 3,
+          "title": "projects.yaml v2 schema + idempotent migration",
+          "description": "pydantic-validated v2 schema with all fields from PRD + migrate_projects_yaml.py.",
+          "details": "PRD \u00a76.6. Fields: version, name, path, status (active|stale|archived), priority (high|medium|low), cron, added_at, skills[], budget_tokens_monthly, budget_tokens_per_run, notes. Migration detects v1 by absent 'version' field, fills defaults, backs up original to projects.yaml.v1.bak. Idempotent: second run is no-op.",
+          "testStrategy": "Smoke: load fixture v2 yaml passes validation. Integration: migrate v1 \u2192 v2, re-run migration \u2192 no diff.",
+          "priority": "high",
+          "dependencies": [],
+          "status": "pending"
+        },
+        {
+          "id": 4,
+          "title": "Secrets schema + per-project override + docs",
+          "description": "~/.kira-hq/.env template + per-project .env merge + SECRETS.md rotation doc.",
+          "details": "PRD \u00a76.5. Keys: TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHATS, OPENROUTER_API_KEY, MINIMAX_API_KEY, GITHUB_TOKEN, KIRA_HQ_USER, KIRA_HQ_PASS. Per-project ~/Projects/<name>/.env overrides global. chmod 600 enforced with world-readable warning. SECRETS.md documents rotation procedure per provider + last-rotated table. NO automated rotation (explicitly out of scope \u00a77).",
+          "testStrategy": "Smoke: load_secrets merges correctly, project override wins. Integration: chmod check warns on world-readable.",
+          "priority": "high",
+          "dependencies": [],
+          "status": "pending"
+        },
+        {
+          "id": 5,
+          "title": "SDK pinning + taskmaster workaround smoke test",
+          "description": "versions.lock.md + shell smoke that proves env-stripping wrapper is load-bearing.",
+          "details": "PRD \u00a76.4. Pins task-master-ai + @anthropic-ai/claude-agent-sdk versions. Shell smoke runs task-master list WITH wrapper (expects success) and WITHOUT wrapper with CLAUDECODE=1 (expects crash). Both assertions must hold; failure halts cron + Telegram alert. Runs on every Kira-HQ cron cycle (<1s).",
+          "testStrategy": "Smoke: wrapper path returns exit 0. Counter-smoke: unwrapped path returns non-zero (proves wrapper load-bearing). Python asserts versions.lock matches installed.",
+          "priority": "high",
+          "dependencies": [],
+          "status": "pending"
+        },
+        {
+          "id": 6,
+          "title": "ADR convention: template + per-project + global index",
+          "description": "ADR/NNNN-kebab.md template, render_adr_index.py, global aggregator.",
+          "details": "PRD \u00a76.8. Location ~/Projects/<p>/docs/ADR/. Template at ~/.kira-hq/templates/ADR.md with Context/Decision/Consequences/Date/Status. render_adr_index.py writes INDEX.md per project + ~/.kira-hq/global-adrs.md. Renderer (T-8) includes last 5 ADRs in kanban_board.md. Seed ADR 0001-use-fastapi-not-flask.md.",
+          "testStrategy": "Smoke: render_index over fixture dir produces sorted table. Integration: global aggregation spans multiple projects.",
+          "priority": "medium",
+          "dependencies": [],
+          "status": "pending"
+        },
+        {
+          "id": 7,
+          "title": "Shared skills library as own git repo",
+          "description": "Init ~/.kira-hq/skills-shared/ as git repo; symlink distribution to projects + Hermes.",
+          "details": "PRD \u00a76.11. git init + push to private GitHub. Move existing kira-hq-render-kanban into it. symlink_skills.py reads projects.yaml, creates symlinks at <project>/.claude/skills/<skill> and ~/.hermes/skills/<skill>. Idempotent (no broken-link churn). Future: tag pinning per project (OUT OF SCOPE v2.0 per \u00a77).",
+          "testStrategy": "Integration: fixture projects.yaml + tmp skills-shared \u2192 correct symlinks created; re-run is no-op.",
+          "priority": "high",
+          "dependencies": [
+            3
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 8,
+          "title": "Module 1 renderer production-ready upgrade",
+          "description": "Upgrade render_kanban.py: pipeline log entries, ADR section, error modes, full 3-tier tests.",
+          "details": "PRD \u00a74 Module 1 + \u00a76.1 + \u00a76.2 + \u00a76.8 + \u00a76.17. On each run: append pipeline log row (T-1); include last 5 ADRs section in kanban_board.md (T-6); produce ~/.kira-hq/global-kanban.md; handle errors (missing yaml/tasks.json/taskmaster crash \u2192 pipeline_log status=fail + skip project). E2E: 10 tasks in JSON \u2192 10 items in rendered markdown preview (matches PRD \u00a74 M1 DoD).",
+          "testStrategy": "Smoke (1 project fake tasks.json), Integration (3 fixture projects real tasks.json), E2E browser (Playwright on md preview, add 11th task assert 11 items). README documents inputs/outputs/error modes.",
+          "priority": "high",
+          "dependencies": [
+            1,
+            3,
+            6,
+            14
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 9,
+          "title": "needs-attention algorithm + ~/.kira-hq/needs-attention.md output",
+          "description": "5-trigger algorithm computes cross-project attention list.",
+          "details": "PRD \u00a76.10. Triggers: (1) blocked >48h, (2) high-prio pending >72h, (3) status=needs-human, (4) failed cron last 24h (reads T-1), (5) last-30d tokens > budget_tokens_monthly (reads T-2). Output md matches PRD sample: \ud83d\udd34 Blocked, \ud83d\udfe0 High-prio stale, \ud83d\udd25 Needs-human, \ud83d\udea8 Failed crons, \ud83d\udcb0 Budget exceeded. Exposed via Module 2 GET /views/needs-attention (T-16).",
+          "testStrategy": "Smoke: each of 5 trigger conditions exercised independently. Integration: realistic fixture with mixed triggers.",
+          "priority": "high",
+          "dependencies": [
+            1,
+            2,
+            3
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 10,
+          "title": "Backup: daily rsync --link-dest snapshots + restore",
+          "description": "03:00 cron snapshots .taskmaster/ across projects with hardlink dedupe; 7-day rolling; restore script.",
+          "details": "PRD \u00a76.7. scripts/snapshot.sh uses rsync -a --link-dest=<yesterday>. Rolling window: delete >7 dirs. Restore script restore_snapshot.sh <project> <date> with dry-run + y/N confirmation. Verified weekly by T-24 (alerts if 2+ days missed). kira-hq auto-commits every 10 min to GH Pages (already exists per PRD) = continuous backup complement.",
+          "testStrategy": "Integration: create 8 fake snapshot dirs, run snapshot.sh, verify oldest removed. Restore dry-run prints correct plan.",
+          "priority": "medium",
+          "dependencies": [
+            3
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 11,
+          "title": "Cron failure handling: retry + incidents + stale + /unstale",
+          "description": "Implements \u00a76.3 policy end-to-end.",
+          "details": "PRD \u00a76.3. Policy: (1) fail \u2192 retry once after 60s; (2) second fail \u2192 pipeline_log status=fail + ~/.kira-hq/incidents/<ts>-<project>.md (stderr + last 50 stdout lines); (3) Telegram alert; (4) mark project status=stale until /unstale ack; (5) stale projects skipped by cron dispatcher (prevents alert storms).",
+          "testStrategy": "Integration: mocked failing skill triggers retry, then incident file, then stale mark. /unstale round-trip (wired in T-21) flips back to active.",
+          "priority": "high",
+          "dependencies": [
+            1,
+            3
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 12,
+          "title": "kira-hq add-project CLI + skill",
+          "description": "9-step interactive CLI/skill to onboard new project.",
+          "details": "PRD \u00a76.9. Steps: (1) validate path exists + git + .taskmaster (or offer init); (2) validate prd/master-prd.md (warn if absent); (3) unique name; (4) prompt priority/cron/budgets/skills; (5) append projects.yaml v2 with added_at=today; (6) create <path>/.env skeleton chmod 600; (7) symlink skills via T-7 script; (8) run kira-hq-render-kanban once; (9) print summary. Skill wrapper for Hermes.",
+          "testStrategy": "Integration: happy-path + each validation branch tested. Idempotent: duplicate name raises collision without partial writes.",
+          "priority": "high",
+          "dependencies": [
+            3,
+            7,
+            8
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 13,
+          "title": "kira-hq archive-project (inverse of add-project)",
+          "description": "Sets status=archived, stops cron, keeps files for history.",
+          "details": "PRD \u00a76.9 inverse clause. CLI + skill. Refuses if already archived. Uninstalls project's launchctl plist. Renderer (T-8) excludes archived from global board but keeps last per-project board. No files deleted.",
+          "testStrategy": "Integration: archive on fixture project sets status, removes cron, preserves files.",
+          "priority": "low",
+          "dependencies": [
+            3,
+            8
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 14,
+          "title": "Test strategy scaffolding (smoke/integration/e2e)",
+          "description": "pytest markers, fixtures, Playwright config, tier docs.",
+          "details": "PRD \u00a76.15. pyproject.toml pytest markers smoke/integration/e2e. conftest.py fixtures: fake_project(tasks_n), pipeline_log_tmp. playwright.config.ts for Chromium on localhost:3001. tests/README.md explains tiers.",
+          "testStrategy": "Meta: pytest -m smoke completes <1s. Playwright test --list runs without error.",
+          "priority": "high",
+          "dependencies": [],
+          "status": "pending"
+        },
+        {
+          "id": 15,
+          "title": "CI: GitHub Actions (push + nightly)",
+          "description": "ci.yml smoke+integration on push; nightly.yml full suite including e2e.",
+          "details": "PRD \u00a76.15 last clause. Setup Python 3.12, Node 22, uv; run pytest -m 'smoke or integration' on push to main. Nightly 08:00 UTC (~09:00 Warsaw) runs full suite with seeded fixtures. Status badge in README.",
+          "testStrategy": "Observe first green CI run + one nightly green.",
+          "priority": "medium",
+          "dependencies": [
+            14
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 16,
+          "title": "Module 2 FastAPI backend: all endpoints",
+          "description": "uvicorn 127.0.0.1:3100 with 7 endpoints matching PRD.",
+          "details": "PRD \u00a74 Module 2. Endpoints: GET /projects, GET /projects/{name}/tasks (filter status/priority), GET /views/needs-attention (calls T-9), GET /views/blockers, POST /projects/{name}/tasks ({title, description, priority, parent_id?}), GET /metrics/tokens (T-2), GET /metrics/pipeline?since=... (T-1 \u00a76.1 exposure). Subprocess task-master list --json via T-5 wrapper. Postman collection in docs/.",
+          "testStrategy": "Smoke: TestClient asserts 200 + expected JSON keys per endpoint. Integration: real projects.yaml against running server. E2E: curl + Postman import.",
+          "priority": "high",
+          "dependencies": [
+            1,
+            2,
+            3,
+            5,
+            9
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 17,
+          "title": "Module 2 auth: HTTPBasic when exposed",
+          "description": "Localhost = no auth; when KIRA_HQ_EXPOSED=true, HTTPBasic dependency gates everything.",
+          "details": "PRD \u00a74 Module 2 auth + \u00a76.12. FastAPI HTTPBasic() dep; hmac.compare_digest for credentials loaded via T-4. Env flag default off. Documented in Module 2 README + SECRETS.md rotation section.",
+          "testStrategy": "Integration: flag off \u2192 200 anonymous; flag on \u2192 401 anonymous, 200 with correct base64 creds.",
+          "priority": "medium",
+          "dependencies": [
+            4,
+            16
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 18,
+          "title": "Module 3 Next.js frontend Phase 3a (localhost:3001)",
+          "description": "Dashboard pages + Playwright E2E matching PRD \u00a76.15 scenario exactly.",
+          "details": "PRD \u00a74 Module 3 Phase 3a + \u00a76.13. Pages: /, /projects/[name], /views/needs-attention, /views/blockers, /add, /hermes (iframe). Fetches localhost:3100. NEXT_PUBLIC_API_URL + NEXT_PUBLIC_MOCK. Playwright scenario: seed 10 tasks \u2192 10 cards \u2192 click \u2192 detail matches JSON \u2192 add 11th \u2192 refresh \u2192 11 cards. Phase 3a requires \u22651 week stability before Phase 3b.",
+          "testStrategy": "Smoke: npm run build succeeds + pages render with mock. Integration: real API. E2E Playwright: exact PRD scenario.",
+          "priority": "high",
+          "dependencies": [
+            16
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 19,
+          "title": "Module 3 Phase 3b: Vercel deploy + HTTPBasic middleware",
+          "description": "Gated deploy after 3a stable \u22651 week; Basic auth at edge; ADR 0003 captures decision.",
+          "details": "PRD \u00a74 Module 3 Phase 3b. Vercel env: NEXT_PUBLIC_API_URL, KIRA_HQ_USER, KIRA_HQ_PASS. middleware.ts enforces Basic auth across domain. Tailscale Funnel/ngrok docs for API reachability from Vercel. Answers \u00a78 Q2 (Vercel auth strategy). ADR 0003-vercel-auth-strategy.md.",
+          "testStrategy": "Preview URL reachable with creds; unauthenticated \u2192 401. Rollback doc verified.",
+          "priority": "low",
+          "dependencies": [
+            17,
+            18
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 20,
+          "title": "Module 4 Hermes skills: report + weekly-review + add-project",
+          "description": "Skills consumable by Hermes scheduler + manual Claude invocation.",
+          "details": "PRD \u00a74 Module 4. kira-hq-report: post-cycle summary (changes since last run, blockers, token delta) \u2192 stdout JSON + pipeline log append. kira-weekly-review: stub skill; full impl in T-24. kira-add-project already built in T-12 \u2014 verify SKILL.md frontmatter for Hermes agent invocation.",
+          "testStrategy": "Integration: subprocess exec each skill \u2192 exit 0 + expected output files.",
+          "priority": "high",
+          "dependencies": [
+            7,
+            8,
+            12,
+            16
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 21,
+          "title": "Module 4 Telegram commands: /status /blockers /add /fix /review /unstale",
+          "description": "6 command handlers with chat-ID allow-list.",
+          "details": "PRD \u00a74 Module 4 Telegram + \u00a76.3 /unstale + \u00a76.18 /review. Handlers call Module 2 API (or skills directly): /status \u2192 kira-hq-report; /blockers \u2192 GET /views/blockers; /add <project> <title> \u2192 POST tasks; /fix <project> <task-id> <note> \u2192 POST with parent_id; /review \u2192 trigger T-24 skill; /unstale <project> \u2192 set status=active. TELEGRAM_ALLOWED_CHATS from T-4 gates access (silent drop + log on unauthorized).",
+          "testStrategy": "Integration: respx-mocked telegram updates \u2192 correct handler \u2192 correct API call. Unauthorized chat silently dropped. Error paths produce friendly messages + incident.",
+          "priority": "high",
+          "dependencies": [
+            4,
+            11,
+            16,
+            20,
+            24
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 22,
+          "title": "Parallel track harness: Path A (Hermes) vs Path B (Claude Code)",
+          "description": "Dual cron paths + weekly comparator + ADR 0002 placeholder.",
+          "details": "PRD \u00a73 + \u00a76.14. Path A: ~/.hermes/scheduler runs skills \u2192 Telegram. Path B: launchctl com.kira-hq.cron-b.plist runs claude /run <skill>. Both paths tag pipeline log entries with KIRA_HQ_TRACK=A|B env var. parallel_track_compare.py groups pipeline log by path, emits weekly table (tasks completed, tokens, human interventions from incidents/, alert count, latency). ADR 0002-orchestrator-decision.md created as placeholder (status: proposed, Decision: TBD after 2\u20133 week window). PARALLEL_TRACK.md records weekly data. Final decision deprecates or retains-as-backup the losing path.",
+          "testStrategy": "Integration: synthetic pipeline log with A/B labels \u2192 correct grouping + table. ADR 0002 exists.",
+          "priority": "high",
+          "dependencies": [
+            1,
+            11
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 23,
+          "title": "Definition-of-Done checker + top-level README (vision/users/architecture)",
+          "description": "Automated \u00a76.17 checker refusing to emit 'done' on gaps + README capturing \u00a71/\u00a72/\u00a73.",
+          "details": "PRD \u00a71 Vision, \u00a72 Users, \u00a73 Architecture, \u00a76.17 DoD per module. README.md opens with Vision + Users scope + architecture diagram. DOD_CHECKLIST.md lists the 6 \u00a76.17 criteria per module. check_module_dod.py <module> automates: features implemented (via tasks.json status), smoke pass, integration pass, e2e pass, README present, pipeline log entries in last 24h. Refuses 'done' if any criterion fails ('no partial-done' per PRD).",
+          "testStrategy": "Integration: 1 passing module + 1 failing module exercised; checker output strict.",
+          "priority": "medium",
+          "dependencies": [
+            1,
+            8,
+            14,
+            16,
+            18,
+            20
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 24,
+          "title": "Weekly review ritual skill (full impl, Saturday 09:00)",
+          "description": "7-section review \u2192 ~/.kira-hq/reviews/YYYY-WW.md + Telegram summary.",
+          "details": "PRD \u00a76.18. Sections: (1) Tasks (completed/project, blockers, needs-human), (2) Tokens (total/project, top-3, W-o-W delta via T-2), (3) Cron (success rate, failed list via T-1), (4) Parallel track A vs B (via T-22, active only during evaluation window), (5) Snapshot health (T-10, alert if 2+ days missed), (6) Stale projects + suggested action, (7) Hermes autolearn delta (gracefully degrades if Hermes API absent). Saturday 09:00 Hermes cron; manual via Telegram /review. Telegram message = truncated summary + link to full md.",
+          "testStrategy": "Integration: synthetic 7-day pipeline log + taskmaster state \u2192 review md with all 7 sections; missing Hermes API \u2192 section 7 reports 'unavailable' without error.",
+          "priority": "medium",
+          "dependencies": [
+            1,
+            2,
+            10,
+            22
+          ],
+          "status": "pending"
+        },
+        {
+          "id": 25,
+          "title": "Execution wrapper: provider-aware task expansion (kira-hq-execute skill)",
+          "description": "Wrapper skill kira-hq-execute that detects active LLM provider and decides task granularity: parent for Sonnet/Opus, expand to subtasks for Kimi/weaker.",
+          "details": "PRD \u00a76.16. Implement ~/.kira-hq/skills-shared/kira-hq-execute/SKILL.md + scripts/kira_hq_execute.py. Behavior: (1) read task ID from CLI/cron arg; (2) detect provider via env KIRA_HQ_PROVIDER (set by Hermes per-job, default 'sonnet'); (3) lookup provider class in policy table from PRD \u00a76.16 (opus|sonnet-4.6|haiku-4.5 -> parent, kimi-2.6|sonnet-4.5|openrouter-fallback -> subtasks); (4) if subtasks: run `task-master expand --id=N --num=auto` (idempotent \u2014 skip if subtasks already exist); (5) auto-populate subtasks from plan.md atomic steps (read corresponding plan section, emit one subtask per checkbox step preserving code blocks \u2014 NOT LLM-regenerated); (6) execute parent OR each subtask in sequence with task-master set-status transitions; (7) append pipeline.log entry per execution with new column expand_used (true|false); (8) on parent failure twice (per \u00a76.3 retry), demote to subtask granularity for retry #3 before alerting; (9) Hermes invokes this skill instead of raw claude calls so autolearn observes provider\u00d7task-type success patterns. Update \u00a76.1 pipeline log schema to include provider + expand_used columns (already done in PRD).",
+          "testStrategy": "Smoke: kira-hq-execute --task-id=8 --provider=sonnet (parent path), kira-hq-execute --task-id=8 --provider=kimi-2.6 (subtask path with mocked task-master expand). Integration: real expand on T-8, verify subtasks contain code blocks copied from plan.md \u00a78 (not paraphrased). E2E: full Hermes cron cycle invokes wrapper on a fixture task with provider=kimi-2.6, verify (a) subtasks materialized, (b) each executed sequentially, (c) pipeline.log entries show expand_used=true. Negative test: parent task fails 2x in a row -> retry 3 demoted to subtasks automatically.",
+          "priority": "high",
+          "dependencies": [
+            20,
+            22,
+            1,
+            11
+          ],
+          "status": "pending"
+        }
+      ]
+    }
+  }
+}

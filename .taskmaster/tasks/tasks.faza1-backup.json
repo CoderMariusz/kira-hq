@@ -1,0 +1,87 @@
+{
+  "markdown-renderer": {
+    "tasks": [
+      {
+        "id": 1,
+        "title": "Setup PyYAML dependency and verify Python environment",
+        "description": "Install PyYAML package and verify Python 3.12+ environment compatibility",
+        "details": "The script already exists but requires PyYAML to be installed. Create a requirements.txt file or use pip to install PyYAML:\n\n```bash\npip install pyyaml\n```\n\nVerify the Python version meets the 3.12+ requirement (current version is 3.14.3, which satisfies this).\n\nPseudo-code for validation:\n```python\nimport sys\nassert sys.version_info >= (3, 12), \"Python 3.12+ required\"\nimport yaml  # Will fail if pyyaml not installed\n```\n\nCreate a requirements.txt file:\n```\npyyaml>=6.0.1\n```\n\nEnsure the script has execute permissions:\n```bash\nchmod +x scripts/render_kanban.py\n```",
+        "testStrategy": "Run `python3 --version` to confirm Python 3.12+. Run `pip list | grep PyYAML` to verify installation. Execute `python3 -c 'import yaml; print(yaml.__version__)'` to validate import. Run `./scripts/render_kanban.py` without errors related to missing dependencies.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 2,
+        "title": "Create sample projects.yaml configuration file",
+        "description": "Create ~/.kira-hq/projects.yaml with sample project configurations for testing",
+        "details": "The script expects a projects.yaml file at ~/.kira-hq/projects.yaml with the following structure:\n\n```yaml\nprojects:\n  - name: \"Example Project\"\n    path: \"/path/to/project\"\n    status: \"active\"\n  - name: \"Another Project\"\n    path: \"/path/to/another/project\"\n    status: \"inactive\"  # Will be skipped\n```\n\nImplementation steps:\n1. Create the ~/.kira-hq/ directory if it doesn't exist:\n   ```bash\n   mkdir -p ~/.kira-hq\n   ```\n\n2. Create a sample projects.yaml file:\n   ```yaml\n   projects:\n     - name: \"kira-hq\"\n       path: \"/Users/mariuszkrawczyk/Projects/kira-hq\"\n       status: \"active\"\n   ```\n\n3. Ensure the file has proper YAML formatting and is readable by the script.\n\n4. The script uses `Path.expanduser()` to handle ~ in paths, so both absolute and ~-prefixed paths work.",
+        "testStrategy": "Verify ~/.kira-hq/projects.yaml exists and is valid YAML. Run `python3 -c 'import yaml; print(yaml.safe_load(open(\"/Users/mariuszkrawczyk/.kira-hq/projects.yaml\")))'` to validate syntax. Ensure at least one project has status='active'. Run render_kanban.py and verify it doesn't exit with code 1 (projects.yaml not found).",
+        "priority": "high",
+        "dependencies": [
+          1
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 3,
+        "title": "Test task-master CLI integration and JSON parsing",
+        "description": "Verify task-master CLI is accessible and returns valid JSON output that the script can parse",
+        "details": "The script executes `task-master list --json` in each project directory. Need to verify:\n\n1. task-master is installed and accessible (already confirmed at /opt/homebrew/bin/task-master)\n2. The command returns valid JSON in the expected format\n3. The script handles both dict format `{\"tasks\": [...]}` and array format `[...]`\n\nTest scenarios:\n```bash\n# In a project directory with .taskmaster/tasks.json\ncd /Users/mariuszkrawczyk/Projects/kira-hq\ntask-master list --json\n```\n\nExpected output formats handled by the script:\n- Format 1: `{\"tasks\": [{\"id\": 1, \"title\": \"...\", \"status\": \"...\"}]}`\n- Format 2: `[{\"id\": 1, \"title\": \"...\", \"status\": \"...\"}]`\n\nThe categorize() function expects tasks with fields:\n- status: pending|needs-human|writer|review|e2e_test|qa|regression|in-progress|done\n- tag: master|fixes\n- updated_at: ISO date string\n- Other fields: id, title, notes, attempts, priority, dependencies, complexity\n\nError handling:\n- Script handles task-master failures gracefully (returns None, sets exit_code=2)\n- Empty stdout returns empty array\n- 30-second timeout prevents hanging",
+        "testStrategy": "Run `task-master list --json` in project directory and verify valid JSON output. Create test projects with various task states. Execute render_kanban.py and verify it correctly categorizes tasks into needs_attention, in_progress, done_today, backlog, and fixes sections. Check that stderr shows warnings for failed task-master executions. Verify exit code is 2 when at least one project fails but others succeed.",
+        "priority": "high",
+        "dependencies": [
+          2
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 4,
+        "title": "Validate markdown output formatting and bilingual support",
+        "description": "Test that kanban_board.md files are generated with correct Polish/English headers and formatting",
+        "details": "The script generates two types of markdown files:\n\n1. **Per-project kanban boards** (e.g., /path/to/project/kanban_board.md):\n   ```markdown\n   # ProjectName — Kanban Board\n   **Last updated:** 2026-04-16T19:37\n   **Total tasks:** X | **Done:** Y | **In progress:** Z | **Needs attention:** W\n   \n   ## 🔴 Wymaga Twojej uwagi (count)\n   - **task_id** — title — notes\n   \n   ## 🟡 In progress by Hermes (count)\n   - **task_id** — title — stage: status — attempt X/3\n   \n   ## ✅ Done today (count)\n   - **task_id** — title\n   \n   ## 📥 Backlog (count)\n   - **task_id** — title — deps: [1,2,3] — complexity: 7/10\n   \n   ## 🐛 Fixes reported (count)\n   - **task_id** — title — priority: high\n   ```\n\n2. **Global kanban** (~/.kira-hq/global-kanban.md):\n   ```markdown\n   # Kira-HQ — Global View\n   **Last updated:** 2026-04-16T19:37\n   \n   ## ProjectName (attention_count)\n   - 🔴 **task_id** — title\n   - 🐛 **task_id** — title\n   ```\n\nValidation points:\n- Polish header: \"Wymaga Twojej uwagi\" (requires your attention)\n- Emoji indicators: 🔴 🟡 ✅ 📥 🐛\n- Proper ISO timestamp formatting with timespec='minutes'\n- Task sorting in backlog by priority\n- Dependencies shown as comma-separated IDs\n- Global view only shows projects with attention items (needs_attention + fixes > 0)",
+        "testStrategy": "Execute render_kanban.py with sample projects containing various task types. Inspect generated kanban_board.md files for correct structure, Polish headers, emoji presence, and proper task categorization. Verify timestamps are ISO format. Check global-kanban.md only includes projects with attention-requiring tasks. Validate markdown renders correctly in a markdown viewer. Ensure backlog tasks are sorted by priority and dependencies are displayed.",
+        "priority": "medium",
+        "dependencies": [
+          3
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 5,
+        "title": "Add comprehensive error handling and edge case coverage",
+        "description": "Enhance error handling for missing directories, malformed YAML, and task-master edge cases",
+        "details": "While the script has basic error handling, add comprehensive coverage for edge cases:\n\n1. **Missing project directories**:\n   - Current: Path is created from projects.yaml, but not validated\n   - Enhancement: Check if project path exists before running task-master\n   ```python\n   if not path.exists():\n       print(f\"WARN: Project path {path} does not exist, skipping\", file=sys.stderr)\n       exit_code = 2\n       continue\n   ```\n\n2. **Malformed projects.yaml**:\n   - Current: Uses yaml.safe_load() which may return None\n   - Enhancement: Validate schema has 'projects' key and is a list\n   ```python\n   cfg = yaml.safe_load(f) or {}\n   if 'projects' not in cfg or not isinstance(cfg.get('projects'), list):\n       print(\"ERROR: Invalid projects.yaml format\", file=sys.stderr)\n       sys.exit(1)\n   ```\n\n3. **Task data validation**:\n   - Handle missing required fields (id, title, status)\n   - Validate status values are in expected set\n   - Handle tasks without updated_at when checking done_today\n   ```python\n   status = t.get(\"status\", \"pending\")\n   if status not in VALID_STATUSES:\n       print(f\"WARN: Unknown status '{status}' for task {t.get('id')}\", file=sys.stderr)\n   ```\n\n4. **File write permissions**:\n   - Handle cases where kanban_board.md can't be written\n   - Ensure ~/.kira-hq/ directory exists before writing global-kanban.md\n   ```python\n   try:\n       kanban_path.write_text(\"\\n\".join(lines) + \"\\n\")\n   except IOError as e:\n       print(f\"ERROR: Cannot write {kanban_path}: {e}\", file=sys.stderr)\n       exit_code = 2\n   ```\n\n5. **JSON parsing errors**:\n   - Current: Has try/except for json.loads\n   - Enhancement: Log the actual JSON content that failed to parse for debugging",
+        "testStrategy": "Create test scenarios: (1) projects.yaml with non-existent paths, (2) malformed YAML syntax, (3) tasks with missing fields, (4) read-only project directories, (5) invalid JSON from task-master. Run render_kanban.py for each scenario and verify appropriate error messages, warnings, and exit codes (1 for missing projects.yaml, 2 for project-level errors). Ensure script doesn't crash but handles errors gracefully.",
+        "priority": "medium",
+        "dependencies": [
+          4
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 6,
+        "title": "Create integration tests and usage documentation",
+        "description": "Write integration test suite and user documentation for the markdown renderer",
+        "details": "Create comprehensive testing and documentation:\n\n1. **Integration test script** (tests/test_render_kanban.py):\n   ```python\n   import tempfile\n   import json\n   from pathlib import Path\n   import subprocess\n   \n   def test_full_workflow():\n       # Create temp .kira-hq directory\n       # Create sample projects.yaml\n       # Mock task-master output with fixture data\n       # Run render_kanban.py\n       # Assert kanban_board.md exists and contains expected sections\n       # Assert global-kanban.md exists\n       # Verify exit code is 0\n   \n   def test_missing_projects_yaml():\n       # Run without projects.yaml\n       # Assert exit code is 1\n   \n   def test_project_error_handling():\n       # Create projects.yaml with invalid path\n       # Assert exit code is 2\n       # Verify warning messages in stderr\n   ```\n\n2. **Usage documentation** (README.md or docs/):\n   ```markdown\n   ## Markdown Renderer\n   \n   ### Setup\n   1. Install dependencies: `pip install pyyaml`\n   2. Create ~/.kira-hq/projects.yaml\n   3. Ensure task-master CLI is installed\n   \n   ### Usage\n   ```bash\n   python3 scripts/render_kanban.py\n   ```\n   \n   ### Configuration\n   projects.yaml format:\n   ```yaml\n   projects:\n     - name: \"Project Name\"\n       path: \"/path/to/project\"\n       status: \"active\"\n   ```\n   \n   ### Output\n   - Per-project: <project>/kanban_board.md\n   - Global: ~/.kira-hq/global-kanban.md\n   \n   ### Exit Codes\n   - 0: Success\n   - 1: projects.yaml not found\n   - 2: One or more projects failed\n   ```\n\n3. **Automation setup** (optional cron job or systemd timer):\n   - Document how to run periodically\n   - Example crontab: `*/5 * * * * python3 ~/scripts/render_kanban.py`\n\n4. **CI/CD integration**:\n   - Add to GitHub Actions or similar to run tests\n   - Ensure script is tested against Python 3.12, 3.13, 3.14",
+        "testStrategy": "Run integration tests using pytest. Verify all test cases pass (full workflow, missing projects.yaml, project errors, malformed YAML, task categorization). Check documentation is complete and accurate. Test running script from different directories. Verify exit codes match documented behavior. If automation is configured, verify it runs successfully on schedule.",
+        "priority": "low",
+        "dependencies": [
+          5
+        ],
+        "status": "pending",
+        "subtasks": []
+      }
+    ],
+    "metadata": {
+      "created": "2026-04-16T18:54:50.491Z",
+      "updated": "2026-04-16T18:54:50.491Z",
+      "description": "Tasks for markdown-renderer context"
+    }
+  }
+}

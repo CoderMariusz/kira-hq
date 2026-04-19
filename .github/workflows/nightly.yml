@@ -1,0 +1,71 @@
+name: Nightly
+
+on:
+  schedule:
+    # 09:00 Europe/Warsaw (UTC+2 summer, UTC+1 winter). Using fixed 08:00 UTC
+    # as a pragmatic compromise; shift to 07:00 UTC in winter if needed.
+    - cron: "0 8 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  full-suite:
+    name: smoke + integration + e2e (nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python deps
+        run: |
+          uv venv --python 3.12
+          uv pip install pyyaml pydantic pytest playwright
+
+      - name: Install task-master-ai (pinned)
+        run: |
+          npm install -g task-master-ai@0.43.1
+
+      - name: Install Playwright browsers (chromium only)
+        run: |
+          .venv/bin/python -m playwright install --with-deps chromium
+
+      - name: Run smoke + integration
+        env:
+          KIRA_RUN_EXPENSIVE_CRASH_REPRO: "0"
+        run: |
+          .venv/bin/pytest -m "smoke or integration" -v --tb=short
+
+      - name: Run e2e suite (seeded fixtures)
+        env:
+          KIRA_RUN_EXPENSIVE_CRASH_REPRO: "0"
+        run: |
+          # e2e is opt-in even on nightly — marker-deselected by default.
+          # If no e2e tests exist yet, pytest exits 5 (no tests collected) —
+          # treat that as success for nightly until Module 3 ships e2e.
+          .venv/bin/pytest -m e2e -v --tb=short || rc=$?
+          if [ "${rc:-0}" = "5" ]; then
+            echo "::notice::No e2e tests collected yet — skipping (expected pre-Module 3)."
+            exit 0
+          fi
+          exit ${rc:-0}
+
+      - name: Shell smoke + integration tests
+        run: |
+          set -e
+          for f in tests/smoke/*.sh tests/integration/*.sh; do
+            [ -f "$f" ] || continue
+            echo "::group::$f"
+            bash "$f"
+            echo "::endgroup::"
+          done
