@@ -13,3 +13,4 @@
 | 2026-04-19T08:35:52+00:00 | kira-hq | kira-hq-render-kanban | n/a | false | 0 | 0 | ok | 1.673 | 25 tasks rendered |
 | 2026-04-19T10:34:36+00:00 | kira-hq | kira-hq-render-kanban | n/a | false | 0 | 0 | ok | 1.671 | 25 tasks rendered |
 | 2026-04-19T11:08:52+00:00 | kira-hq | kira-hq-render-kanban | n/a | false | 0 | 0 | ok | 1.628 | 25 tasks rendered |
+| 2026-04-19T13:13:05+00:00 | kira-hq | kira-hq-execute | gpt-5.4 | false | 0 | 0 | RED | 0.0 | task=T-18 role=test-author step=2 provider=hermes notes=7/7 specs failing as expected |

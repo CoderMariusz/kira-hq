@@ -1,7 +1,7 @@
 """Capture 1440x900 screenshots of every prototype page for user review.
 
 Usage:  .venv/bin/python scripts/capture_prototype_shots.py
-Writes: frontend/screenshots/{01-projects,02-detail,03-needs,04-blockers,05-add,06-hermes}.png
+Writes: frontend/prototype/screenshots/{01-projects,02-detail,03-needs,04-blockers,05-add,06-hermes}.png
 """
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 REPO = Path(__file__).resolve().parents[1]
-PROTO = REPO / "frontend" / "prototype.html"
-OUT = REPO / "frontend" / "screenshots"
+PROTO = REPO / "frontend" / "prototype" / "prototype.html"
+OUT = REPO / "frontend" / "prototype" / "screenshots"
 OUT.mkdir(parents=True, exist_ok=True)
 
 PAGES = [
