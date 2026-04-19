@@ -1,0 +1,110 @@
+"""Write a minimal weekly review markdown stub from pipeline logs and snapshots."""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Iterable
+
+from kira_hq.pipeline_log import GLOBAL_LOG
+from kira_hq.tokens import parse_log, top_n_weekly
+
+
+DEFAULT_SNAPSHOTS_DIR = Path.home() / ".kira-hq" / "snapshots"
+DEFAULT_REVIEWS_DIR = Path.home() / ".kira-hq" / "reviews"
+
+
+def _week_window(now: datetime) -> tuple[datetime, datetime]:
+    start = now - timedelta(days=6)
+    return start.replace(hour=0, minute=0, second=0, microsecond=0), now
+
+
+def _snapshot_days(now: datetime) -> Iterable[str]:
+    for offset in range(6, -1, -1):
+        yield (now - timedelta(days=offset)).date().isoformat()
+
+
+def run_weekly_review(
+    *,
+    pipeline_log: Path | str,
+    snapshots_dir: Path | str,
+    reviews_dir: Path | str,
+    now: datetime,
+    projects_yaml: Path | None,
+) -> Path:
+    del projects_yaml  # reserved for T-24 expansion
+    pipeline_log = Path(pipeline_log)
+    snapshots_dir = Path(snapshots_dir)
+    reviews_dir = Path(reviews_dir)
+    reviews_dir.mkdir(parents=True, exist_ok=True)
+
+    iso_year, iso_week, _ = now.isocalendar()
+    week_iso = f"{iso_year}-W{iso_week:02d}"
+    out_path = reviews_dir / f"{week_iso}.md"
+
+    start, end = _week_window(now)
+    rows = []
+    for row in parse_log(pipeline_log):
+        ts = datetime.fromisoformat(row.timestamp)
+        if start <= ts <= end:
+            rows.append(row)
+
+    top3 = top_n_weekly(week_iso, pipeline_log, n=3)
+    projects = sorted({row.project for row in rows})
+    snapshot_count = sum(1 for day in _snapshot_days(now) if (snapshots_dir / day).exists())
+
+    lines = [f"# Weekly review {week_iso}", ""]
+    lines.extend(["## Top-3 token consumers"])
+    if top3:
+        for project, tokens_in, tokens_out in top3:
+            runs = sum(1 for row in rows if row.project == project)
+            lines.append(f"- {project}: in={tokens_in}, out={tokens_out}, runs={runs}")
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "## Cron success"])
+    if projects:
+        for project in projects:
+            ok = sum(1 for row in rows if row.project == project and row.status == "ok")
+            fail = sum(1 for row in rows if row.project == project and row.status == "fail")
+            lines.append(f"- {project}: {ok} ok / {fail} fail")
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "## Snapshot health", f"- {snapshot_count}/7 days present"])
+    lines.extend([
+        "",
+        "## Parallel track",
+        "- Placeholder for Path A Hermes vs Path B Claude Code weekly comparison (T-24).",
+    ])
+
+    out_path.write_text("\n".join(lines) + "\n")
+    return out_path
+
+
+def _parse_now(value: str) -> datetime:
+    return datetime.fromisoformat(value)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--pipeline-log", type=Path, default=GLOBAL_LOG)
+    parser.add_argument("--snapshots-dir", type=Path, default=DEFAULT_SNAPSHOTS_DIR)
+    parser.add_argument("--reviews-dir", type=Path, default=DEFAULT_REVIEWS_DIR)
+    parser.add_argument("--now", type=_parse_now, default=datetime.now().astimezone().isoformat())
+    parser.add_argument("--projects-yaml", type=Path, default=None)
+    args = parser.parse_args(argv)
+
+    out = run_weekly_review(
+        pipeline_log=args.pipeline_log,
+        snapshots_dir=args.snapshots_dir,
+        reviews_dir=args.reviews_dir,
+        now=args.now if isinstance(args.now, datetime) else _parse_now(args.now),
+        projects_yaml=args.projects_yaml,
+    )
+    print(out)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
