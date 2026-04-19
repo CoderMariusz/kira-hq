@@ -25,38 +25,53 @@ This ADR nails down _who does what_.
 
 Four agent roles, strictly delimited:
 
-| Role              | Agent              | Model                                             | When                                                                                   |
-|-------------------|--------------------|---------------------------------------------------|----------------------------------------------------------------------------------------|
-| **Orchestrator**  | Claude Opus (OAuth)| Opus                                              | Planning, skill writing, architecture tasks, final arbiter on escalation               |
-| **Code driver**   | Codex CLI          | `qwen/qwen3-coder-30b-a3b-instruct` via OpenRouter| Routine implementation: routers, CRUD, boilerplate, polish, refactor                   |
-| **Code reviewer** | Codex CLI          | `qwen/qwen3-coder` (235B) via OpenRouter          | Code review after Codex driver ships a diff (from T-20 onwards)                        |
-| **E2E runner**    | Claude Sonnet      | Sonnet (OAuth)                                    | Writing + executing E2E tests (Playwright / integration suites with real services)     |
+| Role                | Agent                           | Model                                             | When                                                                                   |
+|---------------------|---------------------------------|---------------------------------------------------|----------------------------------------------------------------------------------------|
+| **Orchestrator / Brain** | Claude Opus (OAuth)        | Opus                                              | Plan, skill writing, architecture, frontend **design** when no prototype, PRD conformance checks, triple-fail handler, proposes new solutions, keeps task-master state current |
+| **Code driver**     | Codex CLI (OpenRouter)          | `qwen/qwen3-coder-30b-a3b-instruct`               | Implementation: routers, CRUD, boilerplate, polish, refactor, frontend **fill-in** after Opus sets the design |
+| **Reviewer + test author** | Codex CLI (native model) | Codex default (GPT-5 / o-series)                  | Code review of every Qwen diff; **writes** the unit + integration tests against the diff |
+| **Test runner + QA** | Claude Sonnet (OAuth)          | Sonnet                                            | Runs the test suites, runs Playwright, does QA walkthroughs against PRD §6.15 DoD; reports red with context back to orchestrator |
 
-`qwen3-coder-30b-a3b-instruct` is the default driver model. Upgrade to
-`qwen3-coder` (235B) only for architecture-adjacent implementation or when
-the 30B output fails review twice.
+`qwen3-coder-30b-a3b-instruct` is the default driver model. Escalate
+to `qwen/qwen3-coder` (235B) only when Opus explicitly marks the task
+as architecture-adjacent or when 30B fails review twice on the same
+subtask — then Opus may re-delegate at 235B or take over.
 
 ## Work ownership (what each role OWNS, not just runs)
 
-- **Skills** — Opus only. Skills encode the user's conventions and
-  must be written by the agent that has full context on the project.
-- **Architecture tasks** (PRD cross-cutting changes, new module design,
-  parallel-track harness, anything touching >2 modules at once) — Opus.
-- **E2E tests** — Sonnet. E2E requires judgment about realistic user
-  flows that a code-specialist model tends to miss.
-- **Unit/integration tests + implementation** — Codex driver (Qwen 30B).
-- **Review** — Opus for T-18 and T-19 (hand-off ramp); Codex reviewer
-  (Qwen 235B) from T-20 onwards, with Opus as escalation target.
+- **Skills** — Opus only. Skills encode the user's conventions.
+- **Architecture** (PRD cross-cutting, new module design, parallel-track
+  harness, >2 modules touched at once) — Opus.
+- **Frontend design when no prototype exists** — Opus. Picks layout,
+  component structure, visual hierarchy. Qwen fills in components
+  against Opus's skeleton + acceptance criteria.
+- **Frontend fill-in against an existing prototype or Opus skeleton** — Qwen.
+- **Test authoring** (pytest unit + integration, bash shell tests,
+  Playwright specs) — Codex (native model). Codex writes the tests
+  against Qwen's diff as part of the review cycle.
+- **Test running + QA** — Sonnet. Executes the full suite, runs
+  Playwright browsers, walks through user flows against PRD §6.15 DoD,
+  reports failures with diagnostic context to Opus.
+- **Unit/integration implementation** — Qwen (Codex CLI with OpenRouter).
+- **Code review** — Codex (native model). Every Qwen diff reviewed.
+  Opus becomes reviewer on triple-fail or when Codex flags uncertainty.
+- **Triple-fail handling, PRD conformance audits, task-master state
+  discipline, proposing new solutions mid-task** — Opus. This is the
+  "brain" role: Opus watches the whole pipeline, intervenes when
+  things diverge from PRD or plan, and keeps the kanban true.
 
-## Escalation (Codex → Opus) triggers
+## Escalation (any role → Opus) triggers
 
-- Test fails twice on the same diff after Codex attempts a fix
+- Qwen diff fails review **three times** on the same subtask (triple-fail)
+- Sonnet test run goes red on the same test three consecutive runs
 - Cross-module change detected (file touches >2 of {api, frontend,
   skills-shared, cron, projects-yaml})
 - Security-sensitive surface (auth, secrets, subprocess env, file
-  permissions, network binding)
+  permissions, network binding, launchctl)
 - PRD interpretation ambiguous / plan.md step contradicts PRD
 - New third-party dependency proposed
+- Codex reviewer flags "uncertain — human review"
+- Frontend output fails prototype-match on two components in a row
 
 ## Diff-only context discipline
 

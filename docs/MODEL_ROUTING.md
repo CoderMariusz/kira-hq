@@ -4,35 +4,57 @@ Companion to `docs/ADR/0002-model-routing.md`. This is the _how_, not the _why_.
 
 ## Agent roles (short form)
 
-| Short name     | Agent                   | Model                                             | Purpose                       |
-|----------------|-------------------------|---------------------------------------------------|-------------------------------|
-| **Opus**       | Claude Opus (OAuth Max) | Opus                                              | Orchestrator / skills / arbiter |
-| **Qwen-30B**   | Codex CLI (+OR)         | `qwen/qwen3-coder-30b-a3b-instruct`               | Routine code driver           |
-| **Qwen-235B**  | Codex CLI (+OR)         | `qwen/qwen3-coder`                                | Code reviewer                 |
-| **Sonnet**     | Claude Sonnet (OAuth)   | Sonnet                                            | E2E tests                     |
+| Short name    | Agent                    | Model                                 | Owns                                                                                 |
+|---------------|--------------------------|---------------------------------------|---------------------------------------------------------------------------------------|
+| **Opus**      | Claude Opus (OAuth Max)  | Opus                                  | Brain: plan, skills, architecture, frontend design w/o prototype, PRD audit, triple-fail |
+| **Qwen**      | Codex CLI + OpenRouter   | `qwen/qwen3-coder-30b-a3b-instruct`   | Routine code: impl, boilerplate, polish, refactor, frontend fill-in                  |
+| **Codex**     | Codex CLI (native model) | Codex default (GPT-5 / o-series)      | Code review of every Qwen diff + **writing** the unit/integration/shell tests        |
+| **Sonnet**    | Claude Sonnet (OAuth)    | Sonnet                                | Running tests, running Playwright, QA walkthroughs vs PRD §6.15 DoD                 |
 
 All agents MUST load `kira-hq-task-execution` before starting.
 
+## Per-task pipeline (default flow)
+
+For any T-NN that is not marked "Opus-owned":
+
+1. **Opus** reads plan.md §Task N + PRD §X.Y; if the task is >150 LOC
+   anticipated, decomposes into subtasks; sets `task-master
+   set-status N in-progress`; runs `render_kanban.py`.
+2. **Qwen** implements each subtask. Receives: plan slice, PRD slice,
+   file slice (line range) or full file if new. Returns: unified diff
+   (for modify) or full file (for new).
+3. **Codex** reviews the Qwen diff. Same call also writes the unit +
+   integration tests against the diff (pytest + bash where relevant).
+   Returns: APPROVE or numbered issues; tests committed alongside the diff.
+4. **Sonnet** runs the full suite: `pytest`, shell smoke, shell integration,
+   real-service integration against localhost uvicorn if the task touches
+   the API, Playwright if the task touches the frontend. Reports
+   red lines with enough context (traceback, last 50 lines of stdout/stderr)
+   back to Opus.
+5. **Opus** on green: `task-master set-status done` + `render_kanban.py`
+   + `git add/commit/push` + `gh run watch`. On red with clear fix →
+   feeds Codex/Qwen. On red with ambiguity → takes over directly.
+
 ## Routing matrix for T-18 … T-25
 
-| Task | Summary                             | Driver     | Reviewer         | E2E owner | Notes                                                                 |
-|------|-------------------------------------|------------|------------------|-----------|-----------------------------------------------------------------------|
-| T-18 | Next.js frontend (Phase 3a)         | Qwen-30B   | **Opus** (1st)   | Sonnet    | Opus reviews first user-visible UI commit end-to-end                  |
-| T-19 | Module 2 polish / add-project CLI   | Qwen-30B   | **Opus** (2nd)   | n/a       | Opus does the last hands-on review before fully handing off           |
-| T-20 | Hermes skill registration           | **Opus**   | n/a              | Sonnet    | **Skill-writing → Opus by rule**                                      |
-| T-21 | `kira-weekly-review` skill          | **Opus**   | n/a              | Sonnet    | **Skill-writing → Opus by rule**                                      |
-| T-22 | Parallel-track harness              | **Opus**   | n/a              | Sonnet    | **Architecture → Opus by rule**                                       |
-| T-23 | Telegram command handlers           | Qwen-30B   | Qwen-235B        | Sonnet    | Routine dispatch code; Qwen reviewer now live                         |
-| T-24 | Final E2E Playwright suite          | **Sonnet** | Qwen-235B        | Sonnet    | Sonnet writes the E2E; Qwen reviews for mechanical issues             |
-| T-25 | Release polish (README, CHANGELOG)  | Qwen-30B   | Qwen-235B        | n/a       | Docs + version bump; trivial                                          |
+| Task | Summary                             | Driver     | Reviewer+TestAuthor | Runner+QA | Notes                                                                 |
+|------|-------------------------------------|------------|---------------------|-----------|-----------------------------------------------------------------------|
+| T-18 | Next.js frontend (Phase 3a)         | Qwen       | Codex               | Sonnet    | Opus designs layout/skeleton first (no prototype supplied)            |
+| T-19 | Module 2 polish / add-project CLI   | Qwen       | Codex               | Sonnet    | Mechanical polish                                                     |
+| T-20 | Hermes skill registration           | **Opus**   | Codex               | Sonnet    | Skill-writing → Opus by rule                                          |
+| T-21 | `kira-weekly-review` skill          | **Opus**   | Codex               | Sonnet    | Skill-writing → Opus by rule                                          |
+| T-22 | Parallel-track harness              | **Opus**   | Codex               | Sonnet    | Architecture (>2 modules) → Opus by rule                              |
+| T-23 | Telegram command handlers           | Qwen       | Codex               | Sonnet    | Routine dispatch                                                      |
+| T-24 | Final E2E Playwright suite          | Qwen       | Codex               | **Sonnet**| Sonnet both runs AND extends E2E here; Qwen scaffolds page objects    |
+| T-25 | Release polish (README, CHANGELOG)  | Qwen       | Codex               | Sonnet    | Docs + version bump                                                   |
 
-Any task can escalate to Opus via the triggers in §Escalation below.
+Any task can escalate to Opus via the triggers in §Escalation.
 
-## Subtask decomposition (before delegating to Qwen-30B)
+## Subtask decomposition (Opus → Qwen)
 
 Opus decomposes any task whose anticipated diff exceeds **150 LOC** into
-subtasks of ≤150 LOC each. Each subtask becomes one `delegate_task` call
-with a self-contained prompt. Template:
+subtasks of ≤150 LOC each. Each subtask becomes one `delegate_task`
+call. Template:
 
 ```
 Goal: <imperative, single-sentence>
@@ -41,73 +63,89 @@ PRD section: §X.Y (verbatim quote, ≤20 lines)
 Files in scope:
   - <path>:<line_start>-<line_end>   (for modify)
   - <path>                           (for create)
-Acceptance criteria (concrete, mechanical):
-  1. <pytest / bash / TS test that must PASS>
+Acceptance criteria (mechanical):
+  1. <pytest / bash / TS test that must PASS — Codex will write these>
   2. <lint / typecheck clean>
-  3. <file structure / no extraneous changes>
+  3. <no files outside 'in scope' touched>
 Output format: unified diff against HEAD (for modify) OR full file (for create).
-Forbidden: changing files not listed in scope; adding dependencies.
-Escalation: if any step fails twice, stop, return diagnosis.
+Forbidden: changing files not listed; adding dependencies.
+Escalation: if any step fails twice, STOP, return diagnosis — do NOT loop.
 ```
 
 ## Diff-only discipline
 
-- **Modify existing file** → send only the relevant slice (line range or
-  ~20 lines of context around the change site). Never paste the full
-  file to Qwen-30B unless the file is <80 LOC.
-- **Create new file** → Qwen returns full file; reviewer reads it in
-  full on first review pass only.
-- **Subsequent iteration on the same file** → diff-only both ways.
-- Use `read_file` with `offset`/`limit` or `search_files` with narrow
-  pattern to gather the slice. Avoid `cat`/full reads.
+- **Modify** existing file → Qwen receives only the slice (line range
+  ±20 lines). Full-file reads banned unless file <80 LOC.
+- **Create** new file → Qwen returns full file; Codex reads full file
+  on first review only.
+- **Iterate** on the same file → diff-only both directions.
+- Gather slices with `read_file offset/limit` or `search_files`
+  pattern. Never `cat` full files.
 
-**Frontend prototype-reproduction protocol (future projects):**
-When Qwen is asked to match an existing UI prototype (screenshot, figma,
-codepen), it receives: (a) the visual reference, (b) the component
-skeleton, (c) acceptance criteria including visual diff tolerance.
-If Qwen's output fails two acceptance rounds on the same component,
-frontend design for that project escalates to Opus — Qwen continues
-only on scoped, spec'd-out components.
+**Frontend prototype-reproduction protocol:**
+- No prototype supplied → **Opus designs** layout + component skeleton +
+  visual acceptance criteria first. Qwen fills in.
+- Prototype supplied (screenshot / figma / codepen) → Qwen receives
+  visual ref + component skeleton + visual diff tolerance. If Qwen
+  misses on two components in a row → escalate; Opus takes frontend
+  design for the rest of the project, Qwen stays on spec'd components.
 
-## Review protocol
+## Review protocol (Codex reviewer)
 
-### Reviewer = Opus (T-18, T-19)
+Every Qwen diff goes through Codex. Codex:
 
-1. Read the full diff (Qwen-30B output) with repo context fresh.
-2. Check: (a) PRD coverage claimed in plan.md is real, (b) no
-   unrelated files touched, (c) tests added + run green, (d) no new
-   deps, (e) style matches existing modules.
-3. If blocking issues → write them as a numbered list, hand back to
-   Qwen-30B for a revision. Max 2 revision rounds; third failure →
-   Opus takes over.
+1. Reads the Qwen diff in full.
+2. Writes the unit + integration + shell tests that would have caught
+   bugs in the diff (tests committed alongside the diff).
+3. Runs a mechanical checklist:
+   - PRD coverage claimed vs. actually covered
+   - No unrelated files touched
+   - No new deps unless explicitly allowed
+   - Style matches existing modules (docstrings, error handling, DI
+     seams where conventions exist)
+   - Security: no secrets committed, no `chmod`-unsafe patterns,
+     no `shell=True`, no unescaped user input into shell/path/SQL
+4. Returns `APPROVE` or a numbered issues list.
+5. If issues → Qwen iterates (max **3 rounds** — triple-fail → Opus).
 
-### Reviewer = Qwen-235B (T-20+)
+## Test-running + QA (Sonnet)
 
-1. `delegate_task` with Qwen-235B as reviewer. Prompt:
-   - Diff to review (full)
-   - PRD section cited in the plan
-   - Review checklist from PRD §6.15 + tests-must-pass
-2. Reviewer outputs either `APPROVE` or a numbered issues list.
-3. If issues → Qwen-30B iterates, max 2 revision rounds.
-4. On 3rd failure → escalate to Opus.
+Sonnet is the only role that executes the test suite end-to-end. For
+every Qwen diff that has passed Codex review, Sonnet:
 
-## Escalation triggers (any agent → Opus)
+1. Runs `pytest -m "smoke or integration"` and records pass/fail counts.
+2. Runs `bash tests/smoke/*.sh tests/integration/*.sh`.
+3. If the task touches the API → spins up `./scripts/run-api.sh --prod`
+   and runs `tests/e2e/test_api_curl.sh` or a task-specific curl walk.
+4. If the task touches the frontend → runs `npm run build` and the
+   Playwright suite with chromium.
+5. Performs a QA walkthrough against PRD §6.15 DoD for the task's module:
+   does the user-facing behaviour match what PRD promises?
+6. Reports `GREEN` (with counts) or `RED` with: failing test names,
+   traceback, last 50 lines of stderr, reproducer command, best guess
+   at root cause.
 
-- Test fails twice after Codex attempts to fix
+Sonnet NEVER silently retries; first failure is reported.
+
+## Escalation triggers (any role → Opus)
+
+- Qwen diff fails Codex review **three times** on the same subtask
+- Sonnet same test fails three runs in a row
 - File touches >2 modules (api / frontend / skills-shared / cron /
   projects-yaml)
 - Security-sensitive surface: auth, secrets, subprocess env, chmod,
   network bind, launchctl
 - PRD interpretation ambiguous
 - Proposed new dependency
-- Qwen-235B reviewer flags "uncertain — human review"
+- Codex reviewer flags "uncertain — human review"
+- Frontend prototype-match fails on two components in a row
 
-Escalation format (Codex → Opus):
+Escalation format:
 ```
-ESCALATE: <short title>
-Context: <what was attempted>
+ESCALATE: <short title> (role=<who>, task=T-NN)
+Context: <what was attempted, 2-4 lines>
 What blocks: <concrete error / ambiguity / unknown>
-What I tried: <2 lines, what was attempted and outcome>
+What was tried: <2 lines: attempts and outcomes>
 Proposed paths: <A / B, if known>
 ```
 
@@ -115,52 +153,49 @@ Proposed paths: <A / B, if known>
 
 ### OpenRouter key
 
-Stored in `~/.kira-hq/.env` (chmod 600). The `kira_hq.secrets_schema.load_secrets()`
-loader already picks it up as `OPENROUTER_API_KEY`.
+Stored in `~/.kira-hq/.env` (chmod 600) as `OPENROUTER_API_KEY`.
+`kira_hq.secrets_schema.load_secrets()` picks it up.
 
-### Codex CLI with OpenRouter
+### Codex CLI invocation
 
-Skill `autonomous-ai-agents/codex` documents the Codex CLI flags. For
-Kira-HQ delegation use:
+Two uses, two configs:
 
-```
-delegate_task(
-  goal=<single imperative>,
-  context=<plan.md + PRD slice + file slices>,
-  toolsets=["terminal", "file"],
-  # Codex CLI is launched via the 'codex' skill which reads OPENROUTER_API_KEY
-)
-```
+- **As Qwen driver** → Codex CLI configured to use OpenRouter with
+  `OPENROUTER_API_KEY` and model `qwen/qwen3-coder-30b-a3b-instruct`.
+  Invoked via `delegate_task(acp_command="codex", ...)` when the
+  `autonomous-ai-agents/codex` skill supports this; see that skill
+  for the exact env/flag wiring.
 
-Model selection for the Codex subprocess is set via env var that the
-`codex` skill consumes — see that skill for the exact invocation line.
+- **As Codex reviewer + test author** → Codex CLI with its native
+  default model (GPT-5 / o-series), OpenRouter env NOT set.
 
 Default driver model: `qwen/qwen3-coder-30b-a3b-instruct`
-Reviewer model:       `qwen/qwen3-coder`
+Arch escalation:       `qwen/qwen3-coder` (235B) — only on Opus directive.
 
-### Claude Sonnet for E2E
+### Claude Sonnet for test-run + QA
 
-Spawned via `delegate_task` with `acp_command="claude"` and a Sonnet
-model override per the `claude-code` skill. Used for: writing Playwright
-specs, running real-service integration tests, validating user-visible
-flows.
+Spawned via `delegate_task(acp_command="claude", ...)` per the
+`autonomous-ai-agents/claude-code` skill, with Sonnet as the model
+override. Used for: running suites, Playwright, QA walkthroughs,
+reporting structured diagnostics back to Opus.
 
 ## Pipeline-log columns for routed work
 
-Every delegated task's outcome is logged with `kira_hq.pipeline_log.append_entry`:
+Every task (and subtask, if decomposed) is logged with
+`kira_hq.pipeline_log.append_entry`:
 
-- `provider` — `qwen-coder-30b` | `qwen-coder-235b` | `opus` | `sonnet`
-- `expand_used` — `true` if the task was subtask-decomposed
-- `tokens_in/out` — from the agent's final turn (when available via OpenRouter
-  response headers; approximate for OAuth-backed models)
-- `notes` — `task=T-NN role=driver|reviewer|e2e rev=N`
+- `provider` — `qwen-coder-30b` | `qwen-coder-235b` | `codex-native` |
+  `opus` | `sonnet`
+- `expand_used` — `true` if Opus subtask-decomposed the task
+- `tokens_in/out` — from OpenRouter headers when available; approximate
+  for OAuth models
+- `notes` — `task=T-NN role=driver|reviewer|runner|brain rev=N`
 
-This feeds `/metrics/tokens` (per-project) and the weekly review skill
-(T-21) so we can see how the routing plan plays out in practice.
+Feeds `/metrics/tokens` and the T-21 weekly-review skill so we can
+see how routing plays out in practice and tune the matrix.
 
 ## Escape hatch
 
-This routing is the default for Faza 2 tasks T-18 … T-25. If a task's
-constraints change mid-execution (e.g. user adds a complex requirement
-by chat), the current role may escalate to Opus and Opus re-assigns.
-Never silently change the routing without updating this file.
+This routing is the default for Faza 2 tasks T-18 … T-25. Mid-execution,
+any role may escalate to Opus; Opus re-assigns and amends the matrix
+in a follow-up commit to this file. Never silently re-route.
