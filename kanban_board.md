@@ -1,6 +1,6 @@
 # kira-hq — Kanban Board
-**Last updated:** 2026-04-18T20:55
-**Total tasks:** 25 | **Done:** 15 | **In progress:** 0 | **Needs attention:** 0
+**Last updated:** 2026-04-19T09:09
+**Total tasks:** 25 | **Done:** 16 | **In progress:** 0 | **Needs attention:** 0
 
 ## 🔴 Wymaga Twojej uwagi (0)
 
@@ -10,8 +10,7 @@
 
 ## ✅ Done today (0)
 
-## 📥 Backlog (10)
-- **16** — Module 2 FastAPI backend: all endpoints — priority: high — deps: [1,2,3,5,9] — uvicorn 127.0.0.1:3100 with 7 endpoints matching PRD.
+## 📥 Backlog (9)
 - **18** — Module 3 Next.js frontend Phase 3a (localhost:3001) — priority: high — deps: [16] — Dashboard pages + Playwright E2E matching PRD §6.15 scenario exactly.
 - **20** — Module 4 Hermes skills: report + weekly-review + add-project — priority: high — deps: [7,8,12,16] — Skills consumable by Hermes scheduler + manual Claude invocation.
 - **21** — Module 4 Telegram commands: /status /blockers /add /fix /review /unstale — priority: high — deps: [4,11,16,20,24] — 6 command handlers with chat-ID allow-list.

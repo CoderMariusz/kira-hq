@@ -1,0 +1,104 @@
+{
+  "info": {
+    "name": "Kira-HQ API (Module 2)",
+    "description": "REST API over Kira-HQ project state. PRD §4 Module 2.\n\nDefault host: http://127.0.0.1:3100. All endpoints are read-mostly; POST /projects/{name}/tasks is the single write surface.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "kira-hq-module-2"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://127.0.0.1:3100", "type": "string" },
+    { "key": "project", "value": "kira-hq", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+      }
+    },
+    {
+      "name": "GET /projects",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/projects", "host": ["{{baseUrl}}"], "path": ["projects"] },
+        "description": "List all projects from ~/.kira-hq/projects.yaml with task summary."
+      }
+    },
+    {
+      "name": "GET /projects/{name}/tasks",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/projects/{{project}}/tasks?status=pending&priority=high",
+          "host": ["{{baseUrl}}"],
+          "path": ["projects", "{{project}}", "tasks"],
+          "query": [
+            { "key": "status", "value": "pending" },
+            { "key": "priority", "value": "high" }
+          ]
+        },
+        "description": "Filter tasks by status and/or priority. Both query params are optional."
+      }
+    },
+    {
+      "name": "POST /projects/{name}/tasks",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/projects/{{project}}/tasks",
+          "host": ["{{baseUrl}}"],
+          "path": ["projects", "{{project}}", "tasks"]
+        },
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Example task\",\n  \"description\": \"Created via Postman\",\n  \"priority\": \"medium\",\n  \"parent_id\": null\n}"
+        },
+        "description": "Append a task to <project>/.taskmaster/tasks/tasks.json. Direct JSON write — does NOT invoke claude-agent-sdk (no LLM tokens)."
+      }
+    },
+    {
+      "name": "GET /views/needs-attention",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/views/needs-attention", "host": ["{{baseUrl}}"], "path": ["views", "needs-attention"] },
+        "description": "Run T-9 needs_attention.compute (5 triggers) over current projects.yaml. PRD §6.10."
+      }
+    },
+    {
+      "name": "GET /views/blockers",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/views/blockers", "host": ["{{baseUrl}}"], "path": ["views", "blockers"] },
+        "description": "All status=blocked tasks across active projects, flattened."
+      }
+    },
+    {
+      "name": "GET /metrics/tokens",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/metrics/tokens?since=2026-04-01",
+          "host": ["{{baseUrl}}"],
+          "path": ["metrics", "tokens"],
+          "query": [{ "key": "since", "value": "2026-04-01" }]
+        },
+        "description": "Per-project tokens_in/out aggregate from the global pipeline log. Default window: last 30 days."
+      }
+    },
+    {
+      "name": "GET /metrics/pipeline",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/metrics/pipeline?since=2026-04-19T00:00:00",
+          "host": ["{{baseUrl}}"],
+          "path": ["metrics", "pipeline"],
+          "query": [{ "key": "since", "value": "2026-04-19T00:00:00" }]
+        },
+        "description": "Raw pipeline log rows ≥ since. PRD §6.1."
+      }
+    }
+  ]
+}
