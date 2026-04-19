@@ -1,5 +1,7 @@
 import { expect, Page, Route } from '@playwright/test'
 
+const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3100'
+
 export type ProjectSummary = {
   name: string
   title: string
@@ -98,30 +100,30 @@ export const fixtureTaskList: ProjectTask[] = Array.from({ length: 10 }, (_, ind
 }))
 
 export async function installApiMocks(page: Page) {
-  await page.route('**/projects', async (route) => {
+  await page.route(`${apiUrl}/projects`, async (route) => {
     await fulfillJson(route, defaultProjectSummaries)
   })
 
-  await page.route('**/projects/kira-hq', async (route) => {
+  await page.route(`${apiUrl}/projects/kira-hq`, async (route) => {
     await fulfillJson(route, defaultProjectDetail)
   })
 
-  await page.route('**/projects/fixture', async (route) => {
+  await page.route(`${apiUrl}/projects/fixture`, async (route) => {
     await fulfillJson(route, {
       project: { name: 'fixture', title: 'Fixture Project', root_path: '~/Projects/fixture' },
       tasks: fixtureTaskList,
     })
   })
 
-  await page.route('**/views/needs-attention', async (route) => {
+  await page.route(`${apiUrl}/views/needs-attention`, async (route) => {
     await fulfillJson(route, defaultNeedsAttention)
   })
 
-  await page.route('**/views/blockers', async (route) => {
+  await page.route(`${apiUrl}/views/blockers`, async (route) => {
     await fulfillJson(route, defaultBlockers)
   })
 
-  await page.route('**/metrics', async (route) => {
+  await page.route(`${apiUrl}/metrics`, async (route) => {
     await fulfillJson(route, { projects: 3, tasks: 28, blocked: 2 })
   })
 }
@@ -137,7 +139,7 @@ export async function expectProjectCardCounters(page: Page, name: string, counts
 export async function interceptTaskCreate(page: Page) {
   const seen: Array<{ headers: Record<string, string>; body: string | null }> = []
 
-  await page.route('**/tasks', async (route) => {
+  await page.route(`${apiUrl}/tasks`, async (route) => {
     const request = route.request()
     seen.push({
       headers: request.headers(),

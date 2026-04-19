@@ -2,12 +2,14 @@ import { expect, test } from '@playwright/test'
 
 import { fixtureTaskList, installApiMocks } from './support'
 
+const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3100'
+
 test('PRD §6.15 scenario: 10 tasks visible, click first, refresh to 11 after add', async ({ page }) => {
   let currentTasks = [...fixtureTaskList]
 
   await installApiMocks(page)
 
-  await page.route('**/projects/fixture', async (route) => {
+  await page.route(`${apiUrl}/projects/fixture`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -18,7 +20,7 @@ test('PRD §6.15 scenario: 10 tasks visible, click first, refresh to 11 after ad
     })
   })
 
-  await page.route('**/tasks', async (route) => {
+  await page.route(`${apiUrl}/tasks`, async (route) => {
     currentTasks = [
       ...currentTasks,
       {
@@ -45,17 +47,24 @@ test('PRD §6.15 scenario: 10 tasks visible, click first, refresh to 11 after ad
   await page.getByTestId('task-card').first().click()
   await expect(page.getByText(currentTasks[0].title)).toBeVisible()
 
-  await page.request.post(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3100'}/tasks`, {
-    data: {
-      project: 'fixture',
-      title: 'Fixture task 11',
-      description: 'Added during PRD scenario',
-      priority: 'high',
-      parent_id: '10',
-    },
-    headers: {
-      authorization: `Basic ${Buffer.from('admin:admin').toString('base64')}`,
-    },
+  await page.evaluate(async ({ apiUrl, authorization }) => {
+    await fetch(`${apiUrl}/tasks`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization,
+      },
+      body: JSON.stringify({
+        project: 'fixture',
+        title: 'Fixture task 11',
+        description: 'Added during PRD scenario',
+        priority: 'high',
+        parent_id: '10',
+      }),
+    })
+  }, {
+    apiUrl,
+    authorization: `Basic ${Buffer.from('admin:admin').toString('base64')}`,
   })
 
   await page.reload()
