@@ -29,6 +29,18 @@ WRAPPER_PATTERN='task-master\(\)[[:space:]]*\{'
 fail() { echo "FAIL: $2" >&2; exit "$1"; }
 info() { echo "INFO: $*"; }
 ok()   { echo "OK:   $*"; }
+skip() { echo "SKIP: $*"; exit 0; }
+
+# --- Skip gates -----------------------------------------------------------
+# This test only makes sense on a developer machine where (a) task-master is
+# installed and (b) ~/.zshrc hosts the env-stripping wrapper. On CI runners
+# (ci.yml lean job) neither is true — skip cleanly instead of failing.
+if ! command -v task-master >/dev/null 2>&1; then
+  skip "task-master not installed (CI lean env) — wrapper test not applicable"
+fi
+if [ ! -f "$ZSHRC" ]; then
+  skip "$ZSHRC missing (non-zsh env) — wrapper test not applicable"
+fi
 
 # --- Assertion 1: wrapper function defined in ~/.zshrc --------------------
 if ! grep -Eq "$WRAPPER_PATTERN" "$ZSHRC"; then
