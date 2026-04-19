@@ -83,6 +83,14 @@ each rotation.
 3. Update any Vercel / Tailscale deployments that reference it.
 4. Restart uvicorn.
 
+> **Rotation rule (T-17):** When Kira-HQ is exposed beyond localhost
+> (`KIRA_HQ_EXPOSED=true`), rotate `KIRA_HQ_PASS` **immediately** after
+> any of: laptop loss/theft, shared Tailscale node compromise, a former
+> collaborator losing access, or every 90 days minimum. The HTTPBasic
+> gate has no revocation list — rotating the password is the only way
+> to invalidate a leaked credential. Bump the "Last rotated" row below
+> each time.
+
 ### Last-rotated table
 
 | Key                    | Last rotated | By       | Notes       |

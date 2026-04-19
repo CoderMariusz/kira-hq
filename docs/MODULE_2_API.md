@@ -169,11 +169,27 @@ All routers read dependencies from `app.state.*` — never from module-level glo
 
 ## Auth
 
-**Localhost only** → no auth required. When exposed beyond 127.0.0.1 (Tailscale / Vercel later):
-- HTTP Basic via FastAPI `HTTPBasic` dependency (T-17)
-- Credentials in `~/.kira-hq/.env`: `KIRA_HQ_USER`, `KIRA_HQ_PASS`
+**Localhost only** (default) → no auth required. The API binds `127.0.0.1:3100`; nothing on the network can reach it.
 
-Never expose `--host 0.0.0.0` without finishing T-17 first.
+When exposed beyond localhost (Tailscale / Vercel / reverse proxy), set:
+
+```bash
+export KIRA_HQ_EXPOSED=true
+```
+
+Auth then gates every business endpoint (`/projects/*`, `/views/*`, `/metrics/*`). `/health` stays open so uptime probes don't need credentials.
+
+Credentials live in `~/.kira-hq/.env` (chmod 600):
+```sh
+KIRA_HQ_USER=mariusz
+KIRA_HQ_PASS=<openssl rand -base64 24>
+```
+
+Scheme: HTTP Basic with `hmac.compare_digest` (constant-time compare on both user and pass, prevents username-enumeration timing).
+
+Fail-loud: if `KIRA_HQ_EXPOSED=true` but creds are missing from `.env`, every request returns **503** (refuses to silently allow through a misconfigured prod).
+
+Never expose `--host 0.0.0.0` without setting `KIRA_HQ_EXPOSED=true`.
 
 ## Testing
 

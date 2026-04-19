@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import FastAPI
 
+from kira_hq.api.auth import make_auth_dependency
 from kira_hq.api.routers import metrics, projects, views
 
 # ---------------------------------------------------------------------------
@@ -167,11 +168,17 @@ def make_app(
     pipeline_log_loader: Optional[Callable[[], Path]] = None,
     tokens_dir_loader: Optional[Callable[[], Path]] = None,
     needs_attention_compute: Optional[Callable[..., Any]] = None,
+    auth_secrets_loader: Optional[Callable[[], Dict[str, str]]] = None,
+    auth_exposed_probe: Optional[Callable[[], bool]] = None,
 ) -> FastAPI:
     """Build a FastAPI app with injectable dependencies.
 
     All seams default to the production loaders. Tests pass fakes to avoid
     real disk / subprocess.
+
+    Auth (T-17): `/health` stays open (liveness probe). All business
+    endpoints go behind `make_auth_dependency`, which no-ops unless
+    `KIRA_HQ_EXPOSED=true`.
     """
     app = FastAPI(
         title="Kira-HQ API",
@@ -194,9 +201,17 @@ def make_app(
         needs_attention_compute = _na_compute
     app.state.needs_attention_compute = needs_attention_compute
 
-    app.include_router(projects.router)
-    app.include_router(views.router)
-    app.include_router(metrics.router)
+    auth_dep = make_auth_dependency(
+        secrets_loader=auth_secrets_loader,
+        exposed_probe=auth_exposed_probe,
+    )
+    app.state.auth_dependency = auth_dep
+
+    # Guard business routers with auth; /health stays open.
+    from fastapi import Depends
+    app.include_router(projects.router, dependencies=[Depends(auth_dep)])
+    app.include_router(views.router, dependencies=[Depends(auth_dep)])
+    app.include_router(metrics.router, dependencies=[Depends(auth_dep)])
 
     @app.get("/health", tags=["meta"])
     def health() -> Dict[str, str]:
