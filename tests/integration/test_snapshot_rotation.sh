@@ -42,8 +42,12 @@ echo "OK: first run snapshotted alpha, skipped no-tm"
 for i in 10 11 12 13 14 15 16 17; do
   mkdir -p "$SNAPS/2024-01-$i/alpha"
   touch "$SNAPS/2024-01-$i/alpha/tasks.json"
-  # Set mtime so `ls -1t` orders them predictably (older i = older mtime)
-  touch -t "2024010${i:1}0000" "$SNAPS/2024-01-$i" 2>/dev/null \
+  # Set dir mtime so `ls -1t` orders them: 2024-01-{10..17} → mtime same.
+  # Format YYYYMMDDhhmm (12 digits). Earlier ${i:1} was a bug: it stripped
+  # the leading digit, producing invalid "202401000000" for i=10 and
+  # collapsing 11..17 to 01..07, which inverted the intended ordering and
+  # left 2024-01-10 looking 'newest' on Linux (GNU touch is strict).
+  touch -t "202401${i}0000" "$SNAPS/2024-01-$i" 2>/dev/null \
     || touch -d "2024-01-$i" "$SNAPS/2024-01-$i"
 done
 
