@@ -9,7 +9,7 @@ Command center for AI-driven projects (PRD v2.0).
 
 Kira-HQ is a local-first command center for running **10–15 AI-driven projects in parallel** on one Mac M4. It aggregates task state, kanban views, token usage, incidents, backups, and pipeline logs into one place so the owner can see what needs attention quickly.
 
-Kira-HQ is **the project manager, not the executor**. Hermes remains the orchestrator/executor layer and uses Kira-HQ as the source of project state, dashboards, and module-level views.
+Kira-HQ is **the project manager, not the executor**. In the current local operating mode, **Claude Code is the primary orchestrator** and **Hermes is the delegated worker/executor** for routine implementation through its existing OpenRouter/Qwen route. Both still use the same Kira-HQ substrate for tasks, logs, skills, and project registry state.
 
 ## Users
 
@@ -54,6 +54,29 @@ Kira-HQ is **the project manager, not the executor**. Hermes remains the orchest
 - **Module 2** — FastAPI API for projects, tasks, views, and metrics.
 - **Module 3** — Next.js dashboard over Module 2.
 - **Module 4** — Hermes-facing skills, Telegram commands, and execution harnesses.
+
+## Claude/Hermes shared operations
+
+Neutral CLI entrypoints for the shared substrate:
+
+```bash
+kira-hq list-tasks --json
+kira-hq add-task "Title" --description "..."
+kira-hq set-status 35 done
+kira-hq doctor
+```
+
+Shared Claude -> Hermes worker shim:
+
+```bash
+./scripts/hermes_worker.sh \
+  --task-id 35 \
+  --prompt "Implement the delegated step" \
+  --project-dir /Users/mariuszkrawczyk/Projects/kira-hq \
+  --handoff-out /Users/mariuszkrawczyk/Projects/kira-hq/.hermes/artifacts/35/handoff.json
+```
+
+See `CLAUDE.md` and `docs/claude-hermes-worker-bridge.md` for the full bridge contract and skills-promotion policy.
 
 ## Inputs / Outputs / Error modes
 
