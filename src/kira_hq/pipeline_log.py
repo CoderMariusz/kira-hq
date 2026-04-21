@@ -8,6 +8,8 @@ Schema (updated 2026-04-18 per PRD §6.19 token economics):
 """
 from __future__ import annotations
 
+import fcntl
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Union
@@ -81,8 +83,6 @@ def append_entry(
     """
     p = Path(path).expanduser()
     p.parent.mkdir(parents=True, exist_ok=True)
-    if not p.exists():
-        p.write_text(HEADER)
     values = {
         "timestamp": timestamp,
         "project": project,
@@ -96,8 +96,15 @@ def append_entry(
         "notes": notes,
     }
     row = "| " + " | ".join(_format_value(k, values[k]) for k in COLUMNS) + " |\n"
-    with p.open("a") as f:
+    with p.open("a+", encoding="utf-8") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        f.seek(0, os.SEEK_END)
+        if f.tell() == 0:
+            f.write(HEADER)
         f.write(row)
+        f.flush()
+        os.fsync(f.fileno())
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 def append_global(**fields) -> None:

@@ -37,14 +37,19 @@ fi
 say() { echo "[snapshot] $*"; }
 run() {
   if [ "$DRY_RUN" = "1" ]; then
-    echo "DRY: $*"
+    printf 'DRY:'
+    while [ "$#" -gt 0 ]; do
+      printf ' %q' "$1"
+      shift
+    done
+    printf '\n'
   else
-    eval "$@"
+    "$@"
   fi
 }
 
 say "today=$TODAY yday=$YDAY dest=$DEST linkdest=${LINKDEST:-<none>}"
-run "mkdir -p \"$DEST\""
+run mkdir -p "$DEST"
 
 # Iterate sibling project directories
 shopt -s nullglob 2>/dev/null || true
@@ -54,7 +59,11 @@ for p in "$PROJECTS_ROOT"/*/; do
   if [ ! -d "$p/.taskmaster" ]; then
     continue
   fi
-  run "rsync -a $LINKDEST \"$p/.taskmaster/\" \"$DEST/$name/\""
+  rsync_args=(rsync -a)
+  if [ -n "$LINKDEST" ]; then
+    rsync_args+=("$LINKDEST")
+  fi
+  run "${rsync_args[@]}" "$p/.taskmaster/" "$DEST/$name/"
   copied=$((copied + 1))
   say "  + $name"
 done
@@ -70,7 +79,7 @@ if [ -d "$SNAPSHOT_ROOT" ]; then
   if [ -n "$olds" ]; then
     while IFS= read -r old; do
       [ -n "$old" ] || continue
-      run "rm -rf \"$SNAPSHOT_ROOT/$old\""
+      run rm -rf "$SNAPSHOT_ROOT/$old"
       say "  - pruned $old"
     done <<< "$olds"
   fi

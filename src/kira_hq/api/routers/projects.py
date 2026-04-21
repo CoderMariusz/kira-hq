@@ -47,10 +47,7 @@ def list_projects(request: Request) -> List[ProjectSummary]:
     runner = request.app.state.taskmaster_runner
     for p in doc.get("projects", []):
         path = Path(p["path"]).expanduser()
-        try:
-            tasks = runner(path)
-        except Exception:
-            tasks = []
+        tasks = runner(path)
         out.append(
             ProjectSummary(
                 name=p["name"],
@@ -99,7 +96,7 @@ def add_task(
             parent_id=payload.parent_id,
         )
     except FileNotFoundError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
+        raise HTTPException(status_code=409, detail="project task store is missing") from e
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     return new

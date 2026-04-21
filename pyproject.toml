@@ -11,6 +11,11 @@ dependencies = [
     "httpx>=0.27",
 ]
 
+[project.scripts]
+kira-hq = "kira_hq.cli.main:main"
+kira-hq-add-project = "kira_hq.cli.add_project:main"
+kira-hq-archive-project = "kira_hq.cli.archive_project:main"
+
 [tool.pytest.ini_options]
 pythonpath = ["src", "scripts"]
 testpaths = ["tests"]

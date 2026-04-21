@@ -62,7 +62,22 @@ count="$(ls -1 "$SNAPS" | grep -Ec '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || true)"
   echo "FAIL: oldest snapshot 2024-01-10 not pruned" >&2; exit 1; }
 echo "OK: retention kept $count dirs (≤7), pruned oldest"
 
-# --- Assertion 3: re-running is idempotent (same day, no errors) ----------
+# --- Assertion 3: hostile project names do not execute during rsync ----------
+HOSTILE='evil$(touch pwned-marker)'
+mkdir -p "$PROJECTS/$HOSTILE/.taskmaster/tasks"
+echo '{"master":{"tasks":[{"id":"9","title":"hostile"}]}}' \
+  > "$PROJECTS/$HOSTILE/.taskmaster/tasks/tasks.json"
+rm -f "$TMP/pwned-marker"
+
+( cd "$TMP" && bash "$SNAP_SH" >/dev/null )
+
+[ ! -e "$TMP/pwned-marker" ] || {
+  echo "FAIL: hostile project name executed during snapshot" >&2; exit 1; }
+[ -f "$SNAPS/$TODAY/$HOSTILE/tasks/tasks.json" ] || {
+  echo "FAIL: hostile project name was not copied literally" >&2; exit 1; }
+echo "OK: hostile project names are copied literally without execution"
+
+# --- Assertion 4: re-running is idempotent (same day, no errors) ----------
 bash "$SNAP_SH" >/dev/null
 echo "OK: re-run on same day idempotent"
 

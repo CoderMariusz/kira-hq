@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # Allow `import kira_hq` from src/ layout without install step
@@ -111,3 +112,29 @@ def test_newline_in_notes_does_not_break_table(tmp_path):
     rows = parse_log(p)
     assert len(rows) == 1
     assert "↵" in rows[0].notes
+
+
+def test_concurrent_appends_keep_single_header(tmp_path):
+    p = tmp_path / "parallel.log.md"
+
+    def _append(i: int) -> None:
+        append_entry(
+            p,
+            timestamp=f"2026-04-19T10:00:{i:02d}",
+            project="kira-hq",
+            skill=f"task-{i}",
+            provider="sonnet",
+            expand_used=False,
+            tokens_in=i,
+            tokens_out=i,
+            status="ok",
+            duration_s=0.1,
+            notes=f"row-{i}",
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(_append, range(12)))
+
+    content = p.read_text()
+    assert content.count("| timestamp") == 1
+    assert sum(1 for line in content.splitlines() if "| kira-hq | task-" in line) == 12

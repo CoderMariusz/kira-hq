@@ -185,6 +185,11 @@ and Sonnet step 7) — it's a pre-handoff sanity check from the
 `requesting-code-review` skill Step 4. Purpose: catch obvious slop
 before spending tokens on the next role.
 
+For this controller model, worker handoffs are machine-readable Stage 1
+payloads, not free-form prose. Use the canonical parser in
+`src/kira_hq/handoff.py` via `parse_handoff`, with JSON, YAML, or YAML
+front matter carrying the structured summary.
+
 **Codex self-review before handing RED tests to Sonnet (after step 2):**
 - [ ] Every new test has a clear name describing behaviour
 - [ ] Each test actually asserts the wished-for behaviour (not mock interactions)

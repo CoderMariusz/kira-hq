@@ -5,36 +5,96 @@
 
 Command center for AI-driven projects (PRD v2.0).
 
-## Overview
+## Vision
 
-Kira-HQ coordinates multiple parallel AI coding projects — task-master state,
-token budgets, cron pipelines, incident logs, and the kanban board — around a
-single global projects registry at `~/.kira-hq/projects.yaml`.
+Kira-HQ is a local-first command center for running **10–15 AI-driven projects in parallel** on one Mac M4. It aggregates task state, kanban views, token usage, incidents, backups, and pipeline logs into one place so the owner can see what needs attention quickly.
 
-See `prd/master-prd.md` for the authoritative spec and
-`benchmark/C-hybrid/plan.md` for the 25-task Faza 2 execution plan.
+Kira-HQ is **the project manager, not the executor**. Hermes remains the orchestrator/executor layer and uses Kira-HQ as the source of project state, dashboards, and module-level views.
+
+## Users
+
+- **Primary user:** Mariusz, solo owner-operator.
+- **Operating model:** one always-on local Mac M4, morning dashboard review, Telegram alerts during the day.
+- **Scale target:** 10–15 active projects max; no horizontal scaling target in v2.0.
+
+## Architecture
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ HERMES (orchestrator / executor)                           │
+│ - cron scheduler                                           │
+│ - agent invocation                                         │
+│ - Telegram gateway                                         │
+│ - memory / autolearn                                       │
+└────────────┬────────────────────────────────────────────────┘
+             │ invokes skills, reads/writes state
+             ▼
+┌─────────────────────────────────────────────────────────────┐
+│ KIRA-HQ (project manager, data + views)                    │
+│ - Module 1: markdown renderer                              │
+│ - Module 2: FastAPI backend                                │
+│ - Module 3: Next.js dashboard                              │
+│ - Module 4: Hermes integration skills + commands           │
+│ - cross-cutting: logs, secrets, ADRs, backups, token rollups│
+└────────────┬────────────────────────────────────────────────┘
+             │ reads projects.yaml + task state
+             ▼
+┌─────────────────────────────────────────────────────────────┐
+│ PROJECTS (~/Projects/<name>/)                              │
+│ - .taskmaster/tasks/tasks.json                             │
+│ - kanban_board.md / pipeline.log.md                        │
+│ - prd/master-prd.md                                        │
+│ - docs/ADR/                                                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Modules
+
+- **Module 1** — markdown renderer producing per-project and global kanban views.
+- **Module 2** — FastAPI API for projects, tasks, views, and metrics.
+- **Module 3** — Next.js dashboard over Module 2.
+- **Module 4** — Hermes-facing skills, Telegram commands, and execution harnesses.
+
+## Inputs / Outputs / Error modes
+
+### Inputs
+- `~/.kira-hq/projects.yaml`
+- per-project `.taskmaster/tasks/tasks.json`
+- per-project and global `.env` files
+- pipeline logs, ADRs, review artifacts, and metrics rollups
+
+### Outputs
+- `kanban_board.md` per project
+- `~/.kira-hq/global-kanban.md`
+- `pipeline.log.md` per project plus global aggregate
+- FastAPI JSON responses
+- dashboard pages and Hermes skill outputs
+
+### Error modes
+- missing or invalid `projects.yaml`
+- malformed or stale `.taskmaster/tasks/tasks.json`
+- failed cron/skill runs recorded in `pipeline.log.md` and incidents
+- missing docs or missing pipeline activity causing DoD checker failure
+
+## Definition of Done
+
+- Canonical checklist: `DOD_CHECKLIST.md`
+- Automated checker: `python scripts/check_module_dod.py <module>`
+
+Examples:
+
+```bash
+python scripts/check_module_dod.py module-1
+python scripts/check_module_dod.py 2
+```
+
+The checker is strict: if any criterion fails, the module status is `in-progress` and never partial-`done`.
 
 ## Tests
 
 ```bash
-# Fast suite (runs on CI on every push)
-.venv/bin/pytest -m "smoke or integration" -v
-
-# Full suite including e2e (runs nightly 09:00 Europe/Warsaw)
-.venv/bin/pytest -v
-
-# Shell smoke + integration tests
-bash tests/smoke/*.sh
-bash tests/integration/*.sh
+uv run pytest tests/smoke tests/integration -q
+uv run pytest -m e2e tests/e2e -q
 ```
 
-## CI
-
-- **`ci.yml`** — push + PR to `main`. Runs smoke + integration suite on
-  Python 3.12, plus all shell tests.
-- **`nightly.yml`** — schedule `0 8 * * *` UTC (≈09:00 Europe/Warsaw).
-  Full suite including `-m e2e` with Playwright (chromium) and
-  task-master-ai@0.43.1 installed globally.
-
-Both workflows gate expensive/taskmaster-dependent repros behind
-`KIRA_RUN_EXPENSIVE_CRASH_REPRO=0`.
+See `tests/README.md` for tier conventions.

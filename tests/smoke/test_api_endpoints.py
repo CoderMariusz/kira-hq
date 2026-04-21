@@ -8,13 +8,14 @@ seams so no real disk / subprocess is touched. Each endpoint asserts:
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List
 
 import pytest
 from fastapi.testclient import TestClient
 
-from kira_hq.api.app import make_app
+from kira_hq.api.app import default_taskmaster_add_task, make_app
 
 pytestmark = pytest.mark.smoke
 
@@ -221,3 +222,109 @@ def test_get_metrics_pipeline_filters_old(client):
     r = client.get("/metrics/pipeline?since=2026-05-01T00:00:00")
     assert r.status_code == 200
     assert r.json() == []
+
+
+def test_post_project_tasks_sanitizes_missing_store_path(tmp_path):
+    app = make_app(
+        projects_loader=lambda: {
+            "projects": [{"name": "alpha", "path": str(tmp_path / "alpha"), "status": "active", "priority": "high"}]
+        },
+        taskmaster_add_task=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            FileNotFoundError(f"tasks.json missing at {tmp_path / 'alpha' / '.taskmaster' / 'tasks' / 'tasks.json'}")
+        ),
+    )
+    client = TestClient(app)
+
+    r = client.post("/projects/alpha/tasks", json={"title": "x", "priority": "high"})
+
+    assert r.status_code == 409
+    assert str(tmp_path) not in r.text
+
+
+def test_list_projects_does_not_swallow_unexpected_runner_errors(tmp_path):
+    app = make_app(
+        projects_loader=lambda: {
+            "projects": [{"name": "alpha", "path": str(tmp_path / "alpha"), "status": "active", "priority": "high"}]
+        },
+        taskmaster_runner=lambda _path: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+
+    r = client.get("/projects")
+
+    assert r.status_code == 500
+
+
+def test_blockers_does_not_swallow_unexpected_runner_errors(tmp_path):
+    app = make_app(
+        projects_loader=lambda: {
+            "projects": [{"name": "alpha", "path": str(tmp_path / "alpha"), "status": "active", "priority": "high"}]
+        },
+        taskmaster_runner=lambda _path: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+
+    r = client.get("/views/blockers")
+
+    assert r.status_code == 500
+
+
+def test_default_taskmaster_add_task_discovers_non_master_tag(tmp_path):
+    project_path = tmp_path / "alpha"
+    tasks_dir = project_path / ".taskmaster" / "tasks"
+    tasks_dir.mkdir(parents=True)
+    tasks_file = tasks_dir / "tasks.json"
+    tasks_file.write_text(json.dumps({"release": {"tasks": []}}))
+
+    created = default_taskmaster_add_task(
+        project_path,
+        title="Ship it",
+        description="",
+        priority="high",
+    )
+
+    data = json.loads(tasks_file.read_text())
+    assert created["id"] == "1"
+    assert data["release"]["tasks"][0]["title"] == "Ship it"
+
+
+def test_default_taskmaster_add_task_supports_top_level_tasks_schema(tmp_path):
+    project_path = tmp_path / "alpha"
+    tasks_dir = project_path / ".taskmaster" / "tasks"
+    tasks_dir.mkdir(parents=True)
+    tasks_file = tasks_dir / "tasks.json"
+    tasks_file.write_text(json.dumps({"tasks": []}))
+
+    created = default_taskmaster_add_task(
+        project_path,
+        title="Ship top-level",
+        description="",
+        priority="high",
+    )
+
+    data = json.loads(tasks_file.read_text())
+    assert created["id"] == "1"
+    assert data["tasks"][0]["title"] == "Ship top-level"
+
+
+def test_default_taskmaster_add_task_is_lock_safe(tmp_path):
+    project_path = tmp_path / "alpha"
+    tasks_dir = project_path / ".taskmaster" / "tasks"
+    tasks_dir.mkdir(parents=True)
+    tasks_file = tasks_dir / "tasks.json"
+    tasks_file.write_text(json.dumps({"master": {"tasks": []}}))
+
+    def _create(i: int) -> str:
+        return default_taskmaster_add_task(
+            project_path,
+            title=f"task-{i}",
+            description="",
+            priority="medium",
+        )["id"]
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        ids = sorted(pool.map(_create, range(12)), key=int)
+
+    data = json.loads(tasks_file.read_text())
+    assert ids == [str(i) for i in range(1, 13)]
+    assert [task["id"] for task in data["master"]["tasks"]] == ids

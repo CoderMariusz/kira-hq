@@ -69,14 +69,16 @@ def _runner_env() -> dict[str, str]:
     return env
 
 
-def test_report_runner_emits_json(tmp_path: Path):
+def test_report_runner_emits_json_and_appends_pipeline_log(tmp_path: Path):
     skills_shared = _build_skills_shared(tmp_path)
     log = tmp_path / "pipeline.log.md"
     log.write_text(
         "| timestamp | project | skill | provider | expand_used | tokens_in | tokens_out | status | duration_s | notes |\n"
         "|-----------|---------|-------|----------|-------------|-----------|------------|--------|------------|-------|\n"
         "| 2026-04-17T03:00:00 | p1 | render | sonnet | false | 10 | 20 | ok | 1.0 | a |\n"
+        "| 2026-04-17T04:00:00 | p2 | execute | kimi | true | 5 | 8 | fail | 2.0 | blocker: task crashed |\n"
     )
+    before = log.read_text()
     result = subprocess.run(
         [sys.executable, str(skills_shared / "kira-hq-report" / "run.py"), "--pipeline-log", str(log), "--since", "2026-04-17T02:00:00+00:00"],
         capture_output=True,
@@ -86,11 +88,22 @@ def test_report_runner_emits_json(tmp_path: Path):
     )
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert payload["runs"] == 1
-    assert payload["projects"] == ["p1"]
+    assert payload["runs"] == 2
+    assert payload["projects"] == ["p1", "p2"]
+    assert payload["blockers"] == [
+        {
+            "project": "p2",
+            "skill": "execute",
+            "timestamp": "2026-04-17T04:00:00",
+            "notes": "blocker: task crashed",
+        }
+    ]
+    after = log.read_text()
+    assert after.startswith(before)
+    assert "| kira-hq | kira-hq-report |" in after
 
 
-def test_weekly_review_runner_writes_output_file(tmp_path: Path):
+def test_weekly_review_runner_writes_output_file_and_appends_pipeline_log(tmp_path: Path):
     skills_shared = _build_skills_shared(tmp_path)
     log = tmp_path / "pipeline.log.md"
     log.write_text(
@@ -98,6 +111,7 @@ def test_weekly_review_runner_writes_output_file(tmp_path: Path):
         "|-----------|---------|-------|----------|-------------|-----------|------------|--------|------------|-------|\n"
         "| 2026-04-15T03:00:00 | p2 | other-skill | kimi | false | 500 | 400 | fail | 1.0 | b |\n"
     )
+    before = log.read_text()
     snaps = tmp_path / "snaps"
     for d in ["2026-04-13", "2026-04-14", "2026-04-15", "2026-04-16", "2026-04-17", "2026-04-18", "2026-04-19"]:
         (snaps / d).mkdir(parents=True)
@@ -124,7 +138,15 @@ def test_weekly_review_runner_writes_output_file(tmp_path: Path):
     out = Path(result.stdout.strip())
     assert out.exists()
     assert out.name == "2026-W16.md"
+    telegram_summary = reviews / "2026-W16.telegram.txt"
+    assert telegram_summary.exists()
     assert "Reporting window: 2026-04-13 to 2026-04-19" in out.read_text()
+    assert f"Telegram summary artifact: {telegram_summary}" in out.read_text()
+    after = log.read_text()
+    assert after.startswith(before)
+    assert "| kira-hq | kira-weekly-review | hermes | false | 0 | 0 | ok |" in after
+    assert f"wrote {out}" in after
+    assert f"telegram_summary={telegram_summary}" in after
 
 
 def test_add_project_skill_frontmatter_is_hermes_compatible(tmp_path: Path):

@@ -72,3 +72,46 @@ def test_report_normalizes_naive_and_aware_timestamps(pipeline_log_tmp):
 
     assert out["runs"] == 1
     assert out["items"][0]["timestamp"] == "2026-04-17T03:00:00"
+
+
+def test_report_excludes_synthetic_observability_rows(pipeline_log_tmp):
+    pipeline_log_tmp.append(
+        timestamp="2026-04-17T03:00:00+00:00",
+        project="alpha",
+        skill="real-skill",
+        provider="sonnet",
+        tokens_in=10,
+        tokens_out=20,
+        status="ok",
+        notes="real",
+    )
+    pipeline_log_tmp.append(
+        timestamp="2026-04-17T04:00:00+00:00",
+        project="kira-hq",
+        skill="kira-hq-report",
+        provider="hermes",
+        tokens_in=999,
+        tokens_out=999,
+        status="ok",
+        notes="synthetic",
+    )
+    pipeline_log_tmp.append(
+        timestamp="2026-04-17T05:00:00+00:00",
+        project="kira-hq",
+        skill="kira-weekly-review",
+        provider="hermes",
+        tokens_in=888,
+        tokens_out=888,
+        status="ok",
+        notes="synthetic",
+    )
+
+    out = generate_report_json(
+        pipeline_log_tmp.path,
+        since=datetime(2026, 4, 17, 2, 0, 0, tzinfo=timezone.utc),
+    )
+
+    assert out["runs"] == 1
+    assert out["projects"] == ["alpha"]
+    assert out["token_delta"] == {"tokens_in": 10, "tokens_out": 20}
+    assert [item["skill"] for item in out["items"]] == ["real-skill"]

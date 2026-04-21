@@ -11,9 +11,11 @@ state — important for parallel test sessions.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -32,8 +34,11 @@ DEFAULT_TOKENS_DIR = Path.home() / ".kira-hq" / "metrics"
 
 
 def default_projects_yaml_loader() -> Dict[str, Any]:
-    """Load v2 projects.yaml as a dict. Returns {'version': 2, 'projects': []}
-    if the file is missing so the API stays available for fresh installs."""
+    """Load v2 projects.yaml as a dict.
+
+    Returns {'version': 2, 'projects': []} if the file is missing so the API
+    stays available for fresh installs.
+    """
     from kira_hq.projects_yaml import load  # late import (avoids circulars)
 
     if not DEFAULT_PROJECTS_YAML.exists():
@@ -42,11 +47,44 @@ def default_projects_yaml_loader() -> Dict[str, Any]:
     return doc.model_dump()
 
 
+def _extract_tasks(data: Any) -> List[dict]:
+    if isinstance(data, dict):
+        for tag in ("master", *list(data.keys())):
+            section = data.get(tag)
+            if isinstance(section, dict) and isinstance(section.get("tasks"), list):
+                return section["tasks"]
+        if isinstance(data.get("tasks"), list):
+            return data["tasks"]
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def _discover_task_section(data: Any) -> tuple[str, dict[str, Any]]:
+    if not isinstance(data, dict):
+        raise ValueError("tasks.json must contain an object at the top level")
+    if isinstance(data.get("tasks"), list):
+        return "tasks", data
+    if isinstance(data.get("master"), dict):
+        return "master", data["master"]
+
+    candidates: list[tuple[str, dict[str, Any]]] = []
+    for tag, section in data.items():
+        if isinstance(section, dict) and isinstance(section.get("tasks"), list):
+            candidates.append((str(tag), section))
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise ValueError("tasks.json does not contain a task section")
+    raise ValueError("tasks.json contains multiple task sections; refusing to guess")
+
+
 def default_taskmaster_runner(project_path: Path) -> List[dict]:
     """Run `task-master list --json` in <project_path> and return tasks list.
 
     Uses the env-stripping wrapper (PRD §6.4) inline so this works from any
-    shell, not just zsh. Returns [] on any failure — the API surface is
+    shell, not just zsh. Returns [] on any expected failure — the API surface is
     read-mostly and a single broken project must not 500 the whole endpoint.
     """
     if not (Path(project_path) / ".taskmaster").exists():
@@ -72,34 +110,19 @@ def default_taskmaster_runner(project_path: Path) -> List[dict]:
             timeout=30,
             check=True,
         ).stdout
-        data = json.loads(out)
-        # task-master --json shape: {"master": {"tasks": [...]}} or a tagged form.
-        if isinstance(data, dict):
-            for tag in ("master", *list(data.keys())):
-                section = data.get(tag) if isinstance(data, dict) else None
-                if isinstance(section, dict) and isinstance(
-                    section.get("tasks"), list
-                ):
-                    return section["tasks"]
-            if isinstance(data.get("tasks"), list):
-                return data["tasks"]
-        if isinstance(data, list):
-            return data
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
-            FileNotFoundError, json.JSONDecodeError):
+        return _extract_tasks(json.loads(out))
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+        json.JSONDecodeError,
+    ):
         pass
-    # Fallback: read tasks.json directly
+
     tasks_file = Path(project_path) / ".taskmaster" / "tasks" / "tasks.json"
     if tasks_file.exists():
         try:
-            data = json.loads(tasks_file.read_text())
-            if isinstance(data, dict):
-                for tag in ("master", *list(data.keys())):
-                    section = data.get(tag)
-                    if isinstance(section, dict) and isinstance(
-                        section.get("tasks"), list
-                    ):
-                        return section["tasks"]
+            return _extract_tasks(json.loads(tasks_file.read_text()))
         except (json.JSONDecodeError, OSError):
             return []
     return []
@@ -117,34 +140,58 @@ def default_taskmaster_add_task(
 
     PRD §4 Module 2 says POST writes via `task-master`, but the real
     `task-master add-task` invokes `claude-agent-sdk` (LLM-backed) — too
-    expensive and fragile for a synchronous HTTP request. Direct JSON
-    mutation matches the renderer's read path, is atomic via temp-file
-    swap, and never spends tokens.
+    expensive and fragile for a synchronous HTTP request. Direct JSON mutation
+    matches the renderer's read path and uses an advisory lock + atomic replace
+    to stay safe under concurrent requests.
     """
     tasks_file = Path(project_path) / ".taskmaster" / "tasks" / "tasks.json"
     if not tasks_file.exists():
-        raise FileNotFoundError(f"tasks.json missing at {tasks_file}")
-    data = json.loads(tasks_file.read_text())
-    if not isinstance(data, dict) or "master" not in data:
-        raise ValueError("tasks.json missing 'master' tag (Faza 1+ schema)")
-    tasks = data["master"].setdefault("tasks", [])
-    existing_ids = {str(t.get("id")) for t in tasks}
-    next_id = 1
-    while str(next_id) in existing_ids:
-        next_id += 1
-    new = {
-        "id": str(next_id),
-        "title": title,
-        "description": description,
-        "priority": priority,
-        "status": "pending",
-        "dependencies": [parent_id] if parent_id else [],
-    }
-    tasks.append(new)
-    tmp = tasks_file.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, indent=2))
-    tmp.replace(tasks_file)
-    return new
+        raise FileNotFoundError("project task store is missing")
+
+    lock_path = tasks_file.with_suffix(".json.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            data = json.loads(tasks_file.read_text())
+            tag, section = _discover_task_section(data)
+            tasks = section.setdefault("tasks", [])
+            if not isinstance(tasks, list):
+                raise ValueError(f"tasks.json section {tag!r} has a non-list 'tasks' field")
+
+            existing_ids = {str(task.get("id")) for task in tasks}
+            next_id = 1
+            while str(next_id) in existing_ids:
+                next_id += 1
+
+            new = {
+                "id": str(next_id),
+                "title": title,
+                "description": description,
+                "priority": priority,
+                "status": "pending",
+                "dependencies": [parent_id] if parent_id else [],
+            }
+            tasks.append(new)
+
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=tasks_file.parent,
+                prefix=f"{tasks_file.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as tmp_file:
+                json.dump(data, tmp_file, indent=2)
+                tmp_file.write("\n")
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
+                tmp_name = tmp_file.name
+
+            Path(tmp_name).replace(tasks_file)
+            return new
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def default_pipeline_log_loader() -> Path:
@@ -188,16 +235,13 @@ def make_app(
     app.state.projects_loader = projects_loader or default_projects_yaml_loader
     app.state.projects_yaml_path = projects_yaml_path or DEFAULT_PROJECTS_YAML
     app.state.taskmaster_runner = taskmaster_runner or default_taskmaster_runner
-    app.state.taskmaster_add_task = (
-        taskmaster_add_task or default_taskmaster_add_task
-    )
-    app.state.pipeline_log_loader = (
-        pipeline_log_loader or default_pipeline_log_loader
-    )
+    app.state.taskmaster_add_task = taskmaster_add_task or default_taskmaster_add_task
+    app.state.pipeline_log_loader = pipeline_log_loader or default_pipeline_log_loader
     app.state.tokens_dir_loader = tokens_dir_loader or default_tokens_dir_loader
 
     if needs_attention_compute is None:
         from kira_hq.needs_attention import compute as _na_compute
+
         needs_attention_compute = _na_compute
     app.state.needs_attention_compute = needs_attention_compute
 
@@ -207,8 +251,8 @@ def make_app(
     )
     app.state.auth_dependency = auth_dep
 
-    # Guard business routers with auth; /health stays open.
     from fastapi import Depends
+
     app.include_router(projects.router, dependencies=[Depends(auth_dep)])
     app.include_router(views.router, dependencies=[Depends(auth_dep)])
     app.include_router(metrics.router, dependencies=[Depends(auth_dep)])
@@ -220,5 +264,4 @@ def make_app(
     return app
 
 
-# Production singleton — `uvicorn kira_hq.api.app:app` discovers this.
 app = make_app()

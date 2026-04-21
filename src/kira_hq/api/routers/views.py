@@ -66,10 +66,7 @@ def blockers(request: Request) -> List[Dict[str, Any]]:
         if p.get("status") == "archived":
             continue
         path = Path(p["path"]).expanduser()
-        try:
-            tasks = runner(path)
-        except Exception:
-            continue
+        tasks = runner(path)
         for t in tasks:
             if str(t.get("status")) == "blocked":
                 out.append({

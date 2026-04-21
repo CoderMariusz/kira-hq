@@ -347,7 +347,7 @@ Decision: `localhost:3001` for ≥1 week before any Vercel deploy.
 - Weekly review skill compares: tasks completed each path, tokens, human interventions, alert noise, latency
 - After 2–3 weeks: data-driven decision on which path becomes primary; the other either (a) deprecated, or (b) kept as backup
 
-**Docs:** `docs/PARALLEL_TRACK.md` records weekly comparison data; `docs/ADR/0002-orchestrator-decision.md` captures final choice with rationale.
+**Docs:** `docs/PARALLEL_TRACK.md` records weekly comparison data; `docs/ADR/0003-orchestrator-decision.md` captures final choice with rationale.
 
 ### 6.15 Test strategy
 
