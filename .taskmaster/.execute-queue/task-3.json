@@ -1,0 +1,9 @@
+{
+  "task_id": "3",
+  "subtask_id": null,
+  "title": "projects.yaml v2 schema + idempotent migration",
+  "details": "PRD \u00a76.6. Fields: version, name, path, status (active|stale|archived), priority (high|medium|low), cron, added_at, skills[], budget_tokens_monthly, budget_tokens_per_run, notes. Migration detects v1 by absent 'version' field, fills defaults, backs up original to projects.yaml.v1.bak. Idempotent: second run is no-op.",
+  "provider": "sonnet-4.6",
+  "execution_layer": "hermes-subagent",
+  "queued_at": "2026-04-18T16:16:57.882070+00:00"
+}

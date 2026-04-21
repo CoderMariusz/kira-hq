@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: smoke + integration (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Install Python deps
+        run: |
+          uv venv --python ${{ matrix.python-version }}
+          # Install package (pulls pyyaml/pydantic/fastapi/uvicorn/httpx
+          # from [project.dependencies]) + test tooling.
+          uv pip install -e . pytest
+
+      - name: Show environment
+        run: |
+          .venv/bin/python --version
+          .venv/bin/pytest --version
+          node --version
+
+      - name: Run smoke + integration tests
+        env:
+          # Guarantee expensive / taskmaster-dependent repros stay OFF on CI.
+          KIRA_RUN_EXPENSIVE_CRASH_REPRO: "0"
+        run: |
+          .venv/bin/pytest -m "smoke or integration" -v --tb=short
+
+      - name: Shell smoke tests
+        run: |
+          set -e
+          for f in tests/smoke/*.sh; do
+            [ -f "$f" ] || continue
+            echo "::group::$f"
+            bash "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Shell integration tests
+        run: |
+          set -e
+          for f in tests/integration/*.sh; do
+            [ -f "$f" ] || continue
+            echo "::group::$f"
+            bash "$f"
+            echo "::endgroup::"
+          done

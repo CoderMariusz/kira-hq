@@ -1,0 +1,613 @@
+{
+  "tasks": [
+    {
+      "id": "1",
+      "title": "Initialize ~/.kira-hq directory structure",
+      "description": "Create the global Kira-HQ home directory with all required subdirectories for configs, metrics, snapshots, skills, templates, and reviews.",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [],
+      "details": "```bash\nmkdir -p ~/.kira-hq/{metrics,snapshots,skills-shared,templates,incidents,reviews}\nchmod 700 ~/.kira-hq\n```\nCreate `.gitignore` in `~/.kira-hq` to exclude `.env` and `incidents/`. Initialize `skills-shared/` as a git repo with README explaining the symlink distribution model. Create `templates/ADR.md` with sections: Context, Decision, Consequences, Date, Status.",
+      "testStrategy": "Smoke: verify all directories exist with correct permissions (700 for ~/.kira-hq, 755 for subdirs). Integration: verify `skills-shared/.git` exists and has initial commit. E2E: run `ls -la ~/.kira-hq` and assert all 6 subdirectories present.",
+      "subtasks": [],
+      "blocks": [
+        "2",
+        "3",
+        "4",
+        "8",
+        "9",
+        "10",
+        "12"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "Create ~/.kira-hq/.env secrets schema",
+      "description": "Implement the secrets file per §6.5 with all required keys for Telegram, LLM fallbacks, GitHub, and Kira-HQ auth.",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "1"
+      ],
+      "details": "Create `~/.kira-hq/.env` (chmod 600) with template:\n```bash\n# Telegram (Hermes gateway)\nTELEGRAM_BOT_TOKEN=\nTELEGRAM_ALLOWED_CHATS=\n\n# Fallback LLM\nOPENROUTER_API_KEY=\nMINIMAX_API_KEY=\n\n# GitHub\nGITHUB_TOKEN=\n\n# Kira-HQ FastAPI auth\nKIRA_HQ_USER=mariusz\nKIRA_HQ_PASS=  # generate: openssl rand -base64 24\n```\nCreate `docs/SECRETS.md` documenting rotation steps per provider and last-rotated dates table (empty initially).",
+      "testStrategy": "Smoke: verify file exists, chmod 600, all required keys present (even if empty). Integration: load with `python-dotenv` and assert all keys readable. Document in README that user must populate values before Module 2/4 can function.",
+      "subtasks": [],
+      "blocks": [
+        "18",
+        "24"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "Create projects.yaml v2 schema and migration script",
+      "description": "Implement the projects.yaml v2 format (§6.6) with kira-hq as the first project, plus a migration script for v1→v2.",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "1"
+      ],
+      "details": "Create `~/.kira-hq/projects.yaml`:\n```yaml\nversion: 2\nprojects:\n  - name: kira-hq\n    path: ~/Projects/kira-hq\n    status: active\n    priority: high\n    cron: \"0 */2 * * *\"\n    added_at: 2026-04-16\n    skills:\n      - kira-hq-render-kanban\n      - kira-weekly-review\n    budget_tokens_monthly: 500000\n    budget_tokens_per_run: 50000\n    notes: \"Self-managing; reference project.\"\n```\nCreate `scripts/migrate_projects_yaml.py` (idempotent: detects v1 by missing `version` field, fills defaults for cron, budgets, skills=[]).",
+      "testStrategy": "Smoke: load YAML, assert `version==2`, assert kira-hq project present with all required fields. Integration: run migration script on v1 fixture (no `version` key) → assert v2 output valid. E2E: `yq '.projects[0].name' ~/.kira-hq/projects.yaml` returns 'kira-hq'.",
+      "subtasks": [],
+      "blocks": [
+        "4",
+        "6",
+        "9",
+        "10",
+        "11",
+        "13",
+        "19",
+        "30"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "Implement pipeline.log.md schema and append logic",
+      "description": "Create the per-project and global pipeline log files (§6.1) with markdown table format and append-only logic.",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "1",
+        "3"
+      ],
+      "details": "Create `~/Projects/kira-hq/pipeline.log.md` with header:\n```markdown\n| timestamp           | project   | skill                  | tokens_in | tokens_out | status | duration_s | notes                |\n|---------------------|-----------|------------------------|-----------|------------|--------|------------|----------------------|\n```\nCreate Python helper `scripts/log_pipeline.py`:\n```python\nimport datetime, sys\ndef log_entry(project, skill, tokens_in, tokens_out, status, duration, notes):\n    ts = datetime.datetime.now().isoformat()\n    row = f\"| {ts} | {project} | {skill} | {tokens_in} | {tokens_out} | {status} | {duration:.1f} | {notes} |\"\n    with open(f\"~/Projects/{project}/pipeline.log.md\", \"a\") as f: f.write(row + \"\\n\")\n    with open(\"~/.kira-hq/global-pipeline.log.md\", \"a\") as g: g.write(row + \"\\n\")\n```\nCreate global log at `~/.kira-hq/global-pipeline.log.md` with same header.",
+      "testStrategy": "Smoke: call `log_pipeline.py kira-hq test-skill 0 0 ok 1.2 'test'` → verify row appended to both files. Integration: append 10 entries, verify 10 rows in each file (excluding header). E2E: grep for 'test-skill' in global log, assert matches count.",
+      "subtasks": [],
+      "blocks": [
+        "5",
+        "6",
+        "11",
+        "13",
+        "15",
+        "26"
+      ]
+    },
+    {
+      "id": "5",
+      "title": "Implement token tracking daily aggregation",
+      "description": "Create the token metrics aggregation system (§6.2) with daily roll-up JSON files.",
+      "status": "pending",
+      "priority": "medium",
+      "dependencies": [
+        "4"
+      ],
+      "details": "Create `scripts/aggregate_tokens.py` (invoked by cron or end-of-day):\n```python\nimport json, datetime, glob\nfrom collections import defaultdict\n\ndef aggregate_daily():\n    today = datetime.date.today().isoformat()\n    tokens = defaultdict(lambda: {\"in\": 0, \"out\": 0})\n    # Parse global-pipeline.log.md, extract tokens_in/out per project for today\n    with open(\"~/.kira-hq/global-pipeline.log.md\") as f:\n        for line in f:\n            if today in line:\n                parts = line.split(\"|\")\n                project = parts[2].strip()\n                tokens[project][\"in\"] += int(parts[4].strip())\n                tokens[project][\"out\"] += int(parts[5].strip())\n    with open(f\"~/.kira-hq/metrics/tokens-{today}.json\", \"w\") as out:\n        json.dump(dict(tokens), out, indent=2)\n```\nSchedule via cron at 23:59 daily.",
+      "testStrategy": "Smoke: create fixture log with 3 entries for today (different projects) → run aggregation → verify JSON has correct sums per project. Integration: run on real pipeline.log after Module 1 executes → verify non-zero tokens. E2E: assert `metrics/tokens-<today>.json` exists after cron runs.",
+      "subtasks": [],
+      "blocks": [
+        "23",
+        "26"
+      ]
+    },
+    {
+      "id": "6",
+      "title": "Implement cron failure handling and retry logic",
+      "description": "Build the 2-tier retry system (§6.3) with incident logging and Telegram alerts (stub for now, real Telegram in Module 4).",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "4",
+        "3"
+      ],
+      "details": "Create `scripts/run_skill_with_retry.sh`:\n```bash\n#!/bin/bash\nPROJECT=$1\nSKILL=$2\nshift 2\n\n# First attempt\n$SKILL \"$@\" 2>&1 | tee /tmp/skill.log\nif [ ${PIPESTATUS[0]} -eq 0 ]; then\n  python scripts/log_pipeline.py $PROJECT $SKILL 0 0 ok $(date +%s) 'success'\n  exit 0\nfi\n\n# Retry after 60s\nsleep 60\n$SKILL \"$@\" 2>&1 | tee /tmp/skill.log\nif [ ${PIPESTATUS[0]} -eq 0 ]; then\n  python scripts/log_pipeline.py $PROJECT $SKILL 0 0 ok $(date +%s) 'retry-success'\n  exit 0\nfi\n\n# Both failed → create incident\nTS=$(date +\"%Y%m%d%H%M%S\")\nINCIDENT=~/.kira-hq/incidents/${TS}-${PROJECT}.md\necho \"# Incident: $PROJECT / $SKILL\" > $INCIDENT\necho \"## Timestamp: $(date)\" >> $INCIDENT\ntail -50 /tmp/skill.log >> $INCIDENT\npython scripts/log_pipeline.py $PROJECT $SKILL 0 0 fail $(date +%s) \"failed-twice-see-$TS\"\npython scripts/telegram_alert.py \"🔴 $PROJECT/$SKILL failed twice. See incident $TS.\"  # stub for now\npython scripts/mark_stale.py $PROJECT\nexit 1\n```\nCreate `scripts/mark_stale.py` (sets `status: stale` in projects.yaml). Create `scripts/telegram_alert.py` stub (prints to stdout, real impl in task 25).",
+      "testStrategy": "Smoke: run with a script that fails → verify retry happens after 60s → verify incident file created → verify project marked stale in projects.yaml. Integration: run with real skill that succeeds on retry → verify 'retry-success' in log. E2E: simulate double-failure → check incidents/ dir has markdown file with stderr.",
+      "subtasks": [],
+      "blocks": [
+        "31"
+      ]
+    },
+    {
+      "id": "7",
+      "title": "Implement taskmaster SDK workaround smoke test",
+      "description": "Create the smoke test (§6.4) to verify the task-master RangeError workaround is active and working.",
+      "status": "pending",
+      "priority": "medium",
+      "dependencies": [],
+      "details": "Create `tests/test_taskmaster_workaround.sh`:\n```bash\n#!/bin/bash\n# Test 1: with wrapper (should succeed)\nexport CLAUDECODE=1\ntask-master list --json > /dev/null 2>&1\nif [ $? -ne 0 ]; then\n  echo \"FAIL: task-master with workaround failed\"\n  exit 1\nfi\n\n# Test 2: without wrapper (expect crash, proves wrapper needed)\nunset CLAUDECODE\n# This test is tricky - we expect it to fail in nested Claude sessions\n# For now, just document that manual verification is needed\necho \"PASS: workaround active\"\nexit 0\n```\nCreate `versions.lock.md` documenting last-known-good versions of `task-master-ai` and `@anthropic-ai/claude-agent-sdk`. Add cron entry to run smoke test before each Kira-HQ cycle.",
+      "testStrategy": "Smoke: run test script → assert exit 0. Integration: invoke from cron wrapper → verify runs <1s. E2E: intentionally break wrapper (rename in ~/.zshrc) → run test → assert FAIL detected, then restore wrapper.",
+      "subtasks": [],
+      "blocks": []
+    },
+    {
+      "id": "8",
+      "title": "Implement daily backup snapshots with rsync",
+      "description": "Create the snapshot script (§6.7) with rsync hardlink deduplication and 7-day rolling window.",
+      "status": "pending",
+      "priority": "medium",
+      "dependencies": [
+        "1"
+      ],
+      "details": "Create `scripts/snapshot.sh`:\n```bash\n#!/bin/bash\nTODAY=$(date +%F)\nYESTERDAY=$(date -d \"yesterday\" +%F 2>/dev/null || date -v-1d +%F)  # macOS compat\nSNAPDIR=~/.kira-hq/snapshots/$TODAY\nmkdir -p $SNAPDIR\n\n# Rsync with hardlinks to yesterday's snapshot\nif [ -d ~/.kira-hq/snapshots/$YESTERDAY ]; then\n  rsync -a --link-dest=~/.kira-hq/snapshots/$YESTERDAY ~/Projects/*/.taskmaster/ $SNAPDIR/\nelse\n  rsync -a ~/Projects/*/.taskmaster/ $SNAPDIR/\nfi\n\n# Delete snapshots >7 days old\nfind ~/.kira-hq/snapshots/ -maxdepth 1 -type d -mtime +7 -exec rm -rf {} \\;\necho \"Snapshot $TODAY complete\" | tee -a ~/.kira-hq/snapshots/snapshot.log\n```\nSchedule cron at 03:00 daily. Create `scripts/restore_snapshot.sh <project> <date>` with safety prompt.",
+      "testStrategy": "Smoke: run snapshot.sh manually → verify ~/.kira-hq/snapshots/<today>/ contains .taskmaster/ dirs → verify second run uses hardlinks (check inode match). Integration: create 8 daily snapshots → verify oldest deleted. E2E: modify tasks.json → restore from yesterday's snapshot → verify old version restored.",
+      "subtasks": [],
+      "blocks": []
+    },
+    {
+      "id": "9",
+      "title": "Implement ADR convention and index renderer",
+      "description": "Create the ADR template (§6.8) and script to generate per-project and global ADR indexes.",
+      "status": "pending",
+      "priority": "low",
+      "dependencies": [
+        "1",
+        "3"
+      ],
+      "details": "Already created `templates/ADR.md` in task 1. Now create `scripts/render_adr_index.py`:\n```python\nimport os, glob, yaml\n\ndef render_project_adr_index(project_path):\n    adr_dir = f\"{project_path}/docs/ADR\"\n    if not os.path.exists(adr_dir): return\n    adrs = sorted(glob.glob(f\"{adr_dir}/*.md\"))\n    with open(f\"{adr_dir}/INDEX.md\", \"w\") as idx:\n        idx.write(\"# ADR Index\\n\\n\")\n        for adr in adrs:\n            if \"INDEX\" in adr: continue\n            name = os.path.basename(adr)\n            idx.write(f\"- [{name}](./{name})\\n\")\n\ndef render_global_adr_index():\n    with open(\"~/.kira-hq/projects.yaml\") as f:\n        projects = yaml.safe_load(f)[\"projects\"]\n    with open(\"~/.kira-hq/global-adrs.md\", \"w\") as g:\n        g.write(\"# Global ADR Index\\n\\n\")\n        for p in projects:\n            adr_dir = f\"{p['path']}/docs/ADR\"\n            if os.path.exists(adr_dir):\n                g.write(f\"## {p['name']}\\n\")\n                adrs = sorted(glob.glob(f\"{adr_dir}/*.md\"))[:5]  # last 5\n                for adr in adrs:\n                    if \"INDEX\" in adr: continue\n                    g.write(f\"- {os.path.basename(adr)}\\n\")\n```\nInvoke from Module 1 renderer.",
+      "testStrategy": "Smoke: create 3 ADRs in fixture project → run render_project_adr_index → verify INDEX.md lists 3 entries. Integration: run render_global_adr_index with 2 projects → verify global-adrs.md has both sections. E2E: manually open INDEX.md in browser, click link, verify ADR opens.",
+      "subtasks": [],
+      "blocks": [
+        "14"
+      ]
+    },
+    {
+      "id": "10",
+      "title": "Implement kira-hq add-project CLI command",
+      "description": "Build the add-project tool (§6.9) that validates repos, prompts for config, updates projects.yaml, and symlinks skills.",
+      "status": "pending",
+      "priority": "medium",
+      "dependencies": [
+        "3",
+        "1"
+      ],
+      "details": "Create `scripts/add_project.py` (CLI wrapper callable as `kira-hq add-project <path>`):\n```python\nimport os, sys, yaml, subprocess\nfrom datetime import date\n\ndef add_project(path):\n    path = os.path.expanduser(path)\n    if not os.path.exists(path): raise ValueError(\"Path does not exist\")\n    if not os.path.exists(f\"{path}/.git\"): raise ValueError(\"Not a git repo\")\n    if not os.path.exists(f\"{path}/.taskmaster\"):\n        if input(\"No .taskmaster/ found. Run task-master init? [y/N] \").lower() == 'y':\n            subprocess.run([\"task-master\", \"init\"], cwd=path, check=True)\n    if not os.path.exists(f\"{path}/prd/master-prd.md\"): print(\"⚠️  No PRD found\")\n    \n    name = os.path.basename(path)\n    with open(\"~/.kira-hq/projects.yaml\") as f: projects_yaml = yaml.safe_load(f)\n    if any(p[\"name\"] == name for p in projects_yaml[\"projects\"]): raise ValueError(\"Name already exists\")\n    \n    priority = input(\"Priority [high/medium/low]: \") or \"medium\"\n    cron = input(\"Cron schedule (e.g. '0 */2 * * *'): \") or \"0 */2 * * *\"\n    budget = int(input(\"Budget tokens/month [500000]: \") or 500000)\n    skills = input(\"Skills to enable (comma-separated): \").split(\",\")\n    \n    projects_yaml[\"projects\"].append({\n        \"name\": name, \"path\": path, \"status\": \"active\", \"priority\": priority,\n        \"cron\": cron, \"added_at\": date.today().isoformat(),\n        \"skills\": [s.strip() for s in skills if s.strip()],\n        \"budget_tokens_monthly\": budget, \"budget_tokens_per_run\": budget//10,\n        \"notes\": \"\"\n    })\n    with open(\"~/.kira-hq/projects.yaml\", \"w\") as f: yaml.dump(projects_yaml, f)\n    \n    # Symlink skills\n    os.makedirs(f\"{path}/.claude/skills\", exist_ok=True)\n    for skill in skills:\n        if skill.strip():\n            os.symlink(f\"~/.kira-hq/skills-shared/{skill.strip()}\", f\"{path}/.claude/skills/{skill.strip()}\")\n    \n    # Create .env skeleton\n    with open(f\"{path}/.env\", \"w\") as env: env.write(\"# Project-specific secrets\\n\")\n    os.chmod(f\"{path}/.env\", 0o600)\n    \n    print(f\"✅ Project '{name}' added. Run kira-hq-render-kanban to generate first kanban.\")\n```\nCreate `scripts/archive_project.py` (sets status: archived, stops cron).",
+      "testStrategy": "Smoke: run with fixture path → verify projects.yaml updated, .env created (chmod 600), skills symlinked. Integration: add 2 projects sequentially → verify both in projects.yaml. E2E: add real project (e.g. test-proj) → verify `task-master list` works from that path.",
+      "subtasks": [],
+      "blocks": [
+        "30"
+      ]
+    },
+    {
+      "id": "11",
+      "title": "Implement needs-attention algorithm and markdown output",
+      "description": "Build the needs-attention logic (§6.10) that scans projects for blocked tasks, stale high-priority tasks, budget overruns, and failed crons.",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "3",
+        "4"
+      ],
+      "details": "Create `scripts/generate_needs_attention.py`:\n```python\nimport yaml, json, subprocess, datetime\nfrom collections import defaultdict\n\ndef needs_attention():\n    with open(\"~/.kira-hq/projects.yaml\") as f: projects = yaml.safe_load(f)[\"projects\"]\n    blocked, stale, failed_crons, over_budget = [], [], [], []\n    \n    for p in projects:\n        if p[\"status\"] != \"active\": continue\n        tasks_json = subprocess.run([\"task-master\", \"list\", \"--json\"], cwd=p[\"path\"], capture_output=True, text=True).stdout\n        tasks = json.loads(tasks_json)\n        \n        for t in tasks:\n            # Blocked >48h\n            if t.get(\"status\") == \"blocked\":\n                updated = datetime.datetime.fromisoformat(t.get(\"updated_at\", datetime.datetime.now().isoformat()))\n                if (datetime.datetime.now() - updated).total_seconds() > 48*3600:\n                    blocked.append(f\"{p['name']}/T-{t['id']} \\\"{t['title']}\\\" — {int((datetime.datetime.now()-updated).total_seconds()/3600)}h\")\n            # High-prio stale >72h\n            if t.get(\"priority\") == \"high\" and t.get(\"status\") == \"pending\":\n                updated = datetime.datetime.fromisoformat(t.get(\"updated_at\", datetime.datetime.now().isoformat()))\n                if (datetime.datetime.now() - updated).total_seconds() > 72*3600:\n                    stale.append(f\"{p['name']}/T-{t['id']} \\\"{t['title']}\\\"\")\n        \n        # Check failed crons in last 24h from pipeline.log\n        # Check token budget (sum last 30d from metrics/)\n    \n    with open(\"~/.kira-hq/needs-attention.md\", \"w\") as out:\n        out.write(f\"# Needs Attention — {datetime.datetime.now().isoformat()}\\n\\n\")\n        out.write(f\"## 🔴 Blocked >48h ({len(blocked)})\\n\")\n        for b in blocked: out.write(f\"- {b}\\n\")\n        out.write(f\"\\n## 🟠 High-prio stale >72h ({len(stale)})\\n\")\n        for s in stale: out.write(f\"- {s}\\n\")\n        # Add failed crons, budget sections similarly\n```\nInvoked by Module 1 renderer and exposed via Module 2 API.",
+      "testStrategy": "Smoke: create fixture tasks.json with 1 blocked task (updated_at 3 days ago) → run script → verify needs-attention.md contains that task. Integration: run on real projects.yaml with multiple projects → verify cross-project aggregation. E2E: manually inspect needs-attention.md in browser, verify markdown renders correctly.",
+      "subtasks": [],
+      "blocks": [
+        "14",
+        "21"
+      ]
+    },
+    {
+      "id": "12",
+      "title": "Initialize shared skills library git repo",
+      "description": "Set up ~/.kira-hq/skills-shared/ as a version-controlled git repository (§6.11) with README and initial skill scaffolds.",
+      "status": "pending",
+      "priority": "medium",
+      "dependencies": [
+        "1"
+      ],
+      "details": "Already initialized in task 1. Now add structure:\n```bash\ncd ~/.kira-hq/skills-shared\ngit init\ncat > README.md <<EOF\n# Kira-HQ Shared Skills Library\n\nSingle source of truth for skills. Each project symlinks to these.\n\n## Distribution\n- Per project: ~/Projects/<name>/.claude/skills/<skill> → symlink here\n- Hermes: ~/.hermes/skills/<skill> → symlink here\n\n## Versioning\nGit tags: v<major>.<minor>. Future: projects.yaml may pin tags.\nEOF\nmkdir -p kira-hq-render-kanban kira-hq-report kira-weekly-review kira-add-project\ntouch kira-hq-render-kanban/SKILL.md\ngit add . && git commit -m \"Initial skills library structure\"\ngit remote add origin <private-github-url>  # user must provide\ngit push -u origin main\n```\nCreate `.gitignore` to exclude temp files.",
+      "testStrategy": "Smoke: verify ~/.kira-hq/skills-shared/.git exists, README.md present, 4 skill dirs created. Integration: make a change, commit, verify git log shows 2 commits. E2E: symlink a skill to a test project → verify changes in skills-shared/ visible from project.",
+      "subtasks": [],
+      "blocks": [
+        "15",
+        "25"
+      ]
+    },
+    {
+      "id": "13",
+      "title": "Module 1: Implement markdown renderer core logic",
+      "description": "Build the Python script that reads projects.yaml, calls task-master list --json per project, and generates kanban_board.md per project.",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "3",
+        "4"
+      ],
+      "details": "Create `scripts/render_kanban.py` (refactor from Faza 1, make production-ready):\n```python\nimport yaml, json, subprocess, os\n\ndef render_kanban(project):\n    path = project[\"path\"]\n    tasks_json = subprocess.run([\"task-master\", \"list\", \"--json\"], cwd=path, capture_output=True, text=True, check=True).stdout\n    tasks = json.loads(tasks_json)\n    \n    # Categorize: needs-attention, in-progress, done-today, backlog, fixes\n    categories = {\"needs-attention\": [], \"in-progress\": [], \"done-today\": [], \"backlog\": [], \"fixes\": []}\n    for t in tasks:\n        if t.get(\"status\") == \"blocked\" or t.get(\"priority\") == \"high\" and t.get(\"status\") == \"pending\":\n            categories[\"needs-attention\"].append(t)\n        elif t.get(\"status\") == \"in-progress\":\n            categories[\"in-progress\"].append(t)\n        elif t.get(\"status\") == \"done\" and is_today(t.get(\"completed_at\")):\n            categories[\"done-today\"].append(t)\n        elif t.get(\"type\") == \"fix\":\n            categories[\"fixes\"].append(t)\n        else:\n            categories[\"backlog\"].append(t)\n    \n    with open(f\"{path}/kanban_board.md\", \"w\") as kb:\n        kb.write(f\"# {project['name']} Kanban\\n\\n\")\n        for cat, tasks in categories.items():\n            kb.write(f\"## {cat.replace('-', ' ').title()} ({len(tasks)})\\n\")\n            for t in tasks:\n                kb.write(f\"- **T-{t['id']}** {t['title']} [{t.get('status', 'pending')}]\\n\")\n            kb.write(\"\\n\")\n\ndef is_today(timestamp):\n    import datetime\n    if not timestamp: return False\n    return datetime.date.fromisoformat(timestamp[:10]) == datetime.date.today()\n\ndef main():\n    with open(\"~/.kira-hq/projects.yaml\") as f:\n        projects = yaml.safe_load(f)[\"projects\"]\n    for p in [p for p in projects if p[\"status\"] == \"active\"]:\n        render_kanban(p)\n```\nInvoke with error handling from task 6's retry wrapper.",
+      "testStrategy": "Smoke: create fixture project with 6 tasks in tasks.json → run renderer → verify kanban_board.md has 6 entries. Integration: run on real projects.yaml with kira-hq project → verify categories correct. E2E: open kanban_board.md in Markdown preview, count visible tasks, compare to `task-master list` count.",
+      "subtasks": [],
+      "blocks": [
+        "14"
+      ]
+    },
+    {
+      "id": "14",
+      "title": "Module 1: Generate global kanban and needs-attention markdown",
+      "description": "Extend renderer to produce global-kanban.md (cross-project aggregate) and needs-attention.md (invoking task 11's algorithm).",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "13",
+        "11",
+        "9"
+      ],
+      "details": "Extend `scripts/render_kanban.py`:\n```python\ndef render_global_kanban(projects):\n    all_tasks = []\n    for p in [p for p in projects if p[\"status\"] == \"active\"]:\n        tasks_json = subprocess.run([\"task-master\", \"list\", \"--json\"], cwd=p[\"path\"], capture_output=True, text=True).stdout\n        tasks = json.loads(tasks_json)\n        for t in tasks:\n            t[\"project\"] = p[\"name\"]\n            all_tasks.append(t)\n    \n    with open(\"~/.kira-hq/global-kanban.md\", \"w\") as gk:\n        gk.write(\"# Global Kanban (All Projects)\\n\\n\")\n        # Group by status, then by project\n        by_status = defaultdict(list)\n        for t in all_tasks:\n            by_status[t.get(\"status\", \"pending\")].append(t)\n        for status, tasks in sorted(by_status.items()):\n            gk.write(f\"## {status.title()} ({len(tasks)})\\n\")\n            for t in tasks:\n                gk.write(f\"- **{t['project']}/T-{t['id']}** {t['title']}\\n\")\n            gk.write(\"\\n\")\n\n# In main():\nrender_global_kanban(projects)\nsubprocess.run([\"python\", \"scripts/generate_needs_attention.py\"], check=True)\n```\nAlso invoke ADR index renderer (task 9).",
+      "testStrategy": "Smoke: run with 2 projects (10 tasks total) → verify global-kanban.md has 10 entries. Integration: verify needs-attention.md generated (calls task 11's script). E2E: open global-kanban.md in browser, verify tasks grouped by status.",
+      "subtasks": [],
+      "blocks": [
+        "15"
+      ]
+    },
+    {
+      "id": "15",
+      "title": "Module 1: Create kira-hq-render-kanban skill wrapper",
+      "description": "Package the renderer as a skill callable by Hermes or Claude, logging to pipeline.log on each invocation.",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "14",
+        "12",
+        "4"
+      ],
+      "details": "Create `~/.kira-hq/skills-shared/kira-hq-render-kanban/SKILL.md`:\n```markdown\n# kira-hq-render-kanban\n\nRenders kanban_board.md for all active projects + global views.\n\n## Usage\n`kira-hq-render-kanban`\n\n## Outputs\n- Per-project: ~/Projects/<name>/kanban_board.md\n- Global: ~/.kira-hq/global-kanban.md\n- Needs-attention: ~/.kira-hq/needs-attention.md\n- Logs to: pipeline.log.md (per-project + global)\n```\nCreate executable `~/.kira-hq/skills-shared/kira-hq-render-kanban/run.sh`:\n```bash\n#!/bin/bash\nSTART=$(date +%s)\npython ~/.kira-hq/scripts/render_kanban.py\nDURATION=$(($(date +%s) - START))\npython ~/.kira-hq/scripts/log_pipeline.py kira-hq kira-hq-render-kanban 0 0 ok $DURATION \"rendered\"\necho \"✅ Kanban boards updated\"\n```\nChmod +x. Symlink to `~/Projects/kira-hq/.claude/skills/`.",
+      "testStrategy": "Smoke: invoke `~/.kira-hq/skills-shared/kira-hq-render-kanban/run.sh` → verify kanban_board.md updated, pipeline.log has new entry. Integration: invoke via Claude skill interface (if available) → verify same behavior. E2E: check pipeline.log after skill runs, assert row with 'kira-hq-render-kanban' and status 'ok'.",
+      "subtasks": [],
+      "blocks": [
+        "16",
+        "25",
+        "32"
+      ]
+    },
+    {
+      "id": "16",
+      "title": "Module 1: Write comprehensive tests (smoke, integration, E2E)",
+      "description": "Implement all three test tiers (§6.15) for Module 1 per Definition of Done (§6.17).",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "15"
+      ],
+      "details": "Create `tests/smoke/test_render_kanban.py`:\n```python\nimport tempfile, json, os\n\ndef test_smoke():\n    # Create fixture: fake projects.yaml, fake tasks.json\n    with tempfile.TemporaryDirectory() as tmpdir:\n        os.makedirs(f\"{tmpdir}/.taskmaster\")\n        with open(f\"{tmpdir}/.taskmaster/tasks.json\", \"w\") as f:\n            json.dump([{\"id\": 1, \"title\": \"Test\", \"status\": \"pending\"}], f)\n        # Mock projects.yaml → run renderer → assert kanban_board.md exists\n        # Assert: no crash, file created, 1 task visible\n```\nCreate `tests/integration/test_render_real_projects.py` (uses real ~/.kira-hq/projects.yaml).\nCreate `tests/e2e/test_kanban_browser.spec.js` (Playwright):\n```js\ntest('kanban matches tasks.json count', async ({ page }) => {\n  // Setup: create fixture project with 10 tasks\n  // Open file:///path/to/kanban_board.md in browser (via local server or file://)\n  await page.goto('file:///tmp/fixture/kanban_board.md');\n  const tasks = await page.locator('li').count();\n  expect(tasks).toBe(10);\n});\n```\nDocument in `tests/README.md` how to run each tier.",
+      "testStrategy": "Run all tests: `pytest tests/smoke tests/integration && npx playwright test tests/e2e`. Assert all pass. Verify README documents running instructions. CI: add GitHub Actions workflow to run on push.",
+      "subtasks": [],
+      "blocks": [
+        "17",
+        "29"
+      ]
+    },
+    {
+      "id": "17",
+      "title": "Module 1: Complete README and achieve Definition of Done",
+      "description": "Document Module 1 inputs/outputs/error modes, verify all DoD criteria (§6.17) are met.",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "16"
+      ],
+      "details": "Create `docs/MODULE_1_RENDERER.md`:\n```markdown\n# Module 1: Markdown Renderer\n\n## Inputs\n- ~/.kira-hq/projects.yaml (v2 schema)\n- Per-project: .taskmaster/tasks.json (via task-master list --json)\n\n## Outputs\n- Per-project: kanban_board.md\n- Global: ~/.kira-hq/global-kanban.md\n- Global: ~/.kira-hq/needs-attention.md\n- Logs: pipeline.log.md (per-project + global)\n\n## Error Modes\n- task-master not found → fail with clear message\n- tasks.json malformed → log to incidents/, retry (see §6.3)\n- project path missing → skip project, log warning\n\n## Usage\nInvoke skill: `kira-hq-render-kanban`\nOr directly: `python scripts/render_kanban.py`\n\n## DoD Checklist\n- [x] Smoke tests pass\n- [x] Integration tests pass\n- [x] E2E browser tests pass (10 tasks in JSON → 10 visible)\n- [x] README complete\n- [x] Pipeline log entries flow correctly\n```\nRun DoD checklist verification script: `scripts/verify_module_done.sh 1` → asserts all 6 criteria true.",
+      "testStrategy": "Manual review: read MODULE_1_RENDERER.md, verify all sections complete. Run verify_module_done.sh → assert exit 0. Re-run all Module 1 tests → assert 100% pass rate.",
+      "subtasks": [],
+      "blocks": [
+        "33",
+        "35"
+      ]
+    },
+    {
+      "id": "18",
+      "title": "Module 2: Initialize FastAPI project structure",
+      "description": "Set up FastAPI app scaffold with uvicorn config, directory structure, and basic health endpoint.",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "2"
+      ],
+      "details": "Create `backend/` directory structure:\n```\nbackend/\n├── app/\n│   ├── __init__.py\n│   ├── main.py          # FastAPI app entry\n│   ├── routes/          # API endpoints\n│   │   ├── projects.py\n│   │   ├── views.py\n│   │   └── metrics.py\n│   ├── models.py        # Pydantic schemas\n│   └── utils.py         # subprocess wrappers for task-master\n├── requirements.txt\n└── run.sh               # uvicorn launcher\n```\nCreate `backend/app/main.py`:\n```python\nfrom fastapi import FastAPI\nfrom fastapi.middleware.cors import CORSMiddleware\n\napp = FastAPI(title=\"Kira-HQ API\", version=\"2.0\")\n\napp.add_middleware(\n    CORSMiddleware,\n    allow_origins=[\"http://localhost:3001\"],  # Next.js frontend\n    allow_methods=[\"*\"],\n    allow_headers=[\"*\"],\n)\n\n@app.get(\"/health\")\ndef health(): return {\"status\": \"ok\"}\n```\nCreate `backend/run.sh`:\n```bash\n#!/bin/bash\nuvicorn app.main:app --host 127.0.0.1 --port 3100 --reload\n```\nCreate `requirements.txt`: `fastapi uvicorn[standard] pyyaml python-dotenv`.",
+      "testStrategy": "Smoke: run `./run.sh` → curl localhost:3100/health → assert {\"status\": \"ok\"}. Integration: verify CORS headers present in response. E2E: open http://localhost:3100/docs → verify Swagger UI loads.",
+      "subtasks": [],
+      "blocks": [
+        "19",
+        "23"
+      ]
+    },
+    {
+      "id": "19",
+      "title": "Module 2: Implement GET /projects endpoint",
+      "description": "Read projects.yaml and return list of projects with status summary (task counts per project).",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "18",
+        "3"
+      ],
+      "details": "Create `backend/app/routes/projects.py`:\n```python\nfrom fastapi import APIRouter\nimport yaml, subprocess, json\nfrom pathlib import Path\n\nrouter = APIRouter(prefix=\"/projects\", tags=[\"projects\"])\n\n@router.get(\"\")\ndef list_projects():\n    with open(Path.home() / \".kira-hq\" / \"projects.yaml\") as f:\n        projects = yaml.safe_load(f)[\"projects\"]\n    result = []\n    for p in projects:\n        tasks_json = subprocess.run(\n            [\"task-master\", \"list\", \"--json\"],\n            cwd=p[\"path\"], capture_output=True, text=True\n        ).stdout\n        tasks = json.loads(tasks_json) if tasks_json else []\n        result.append({\n            \"name\": p[\"name\"],\n            \"status\": p[\"status\"],\n            \"priority\": p[\"priority\"],\n            \"task_count\": len(tasks),\n            \"pending\": len([t for t in tasks if t.get(\"status\") == \"pending\"]),\n            \"in_progress\": len([t for t in tasks if t.get(\"status\") == \"in-progress\"]),\n            \"blocked\": len([t for t in tasks if t.get(\"status\") == \"blocked\"]),\n        })\n    return result\n```\nRegister router in `main.py`: `app.include_router(projects.router)`.",
+      "testStrategy": "Smoke: curl localhost:3100/projects → assert returns array with kira-hq project, task_count > 0. Integration: add second project to projects.yaml → assert 2 items returned. E2E: Postman collection: GET /projects → verify response schema matches OpenAPI spec.",
+      "subtasks": [],
+      "blocks": [
+        "20",
+        "21"
+      ]
+    },
+    {
+      "id": "20",
+      "title": "Module 2: Implement GET /projects/{name}/tasks endpoint",
+      "description": "Return task list for a specific project with optional filtering by status and priority.",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "19"
+      ],
+      "details": "Extend `backend/app/routes/projects.py`:\n```python\nfrom fastapi import Query\n\n@router.get(\"/{name}/tasks\")\ndef get_project_tasks(name: str, status: str = Query(None), priority: str = Query(None)):\n    with open(Path.home() / \".kira-hq\" / \"projects.yaml\") as f:\n        projects = yaml.safe_load(f)[\"projects\"]\n    project = next((p for p in projects if p[\"name\"] == name), None)\n    if not project:\n        raise HTTPException(404, \"Project not found\")\n    \n    tasks_json = subprocess.run(\n        [\"task-master\", \"list\", \"--json\"],\n        cwd=project[\"path\"], capture_output=True, text=True\n    ).stdout\n    tasks = json.loads(tasks_json) if tasks_json else []\n    \n    # Filter\n    if status:\n        tasks = [t for t in tasks if t.get(\"status\") == status]\n    if priority:\n        tasks = [t for t in tasks if t.get(\"priority\") == priority]\n    \n    return {\"project\": name, \"tasks\": tasks}\n```\nImport HTTPException from fastapi.",
+      "testStrategy": "Smoke: curl /projects/kira-hq/tasks → assert returns tasks array. Integration: curl /projects/kira-hq/tasks?status=pending → verify only pending tasks. E2E: Postman: test with invalid project name → assert 404.",
+      "subtasks": [],
+      "blocks": [
+        "22"
+      ]
+    },
+    {
+      "id": "21",
+      "title": "Module 2: Implement GET /views/needs-attention and /views/blockers",
+      "description": "Expose needs-attention algorithm output (task 11) and blockers-only view via API.",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "11",
+        "19"
+      ],
+      "details": "Create `backend/app/routes/views.py`:\n```python\nfrom fastapi import APIRouter\nimport subprocess, yaml, json\nfrom pathlib import Path\n\nrouter = APIRouter(prefix=\"/views\", tags=[\"views\"])\n\n@router.get(\"/needs-attention\")\ndef needs_attention():\n    # Invoke task 11's script, parse needs-attention.md\n    subprocess.run([\"python\", str(Path.home() / \".kira-hq\" / \"scripts\" / \"generate_needs_attention.py\")], check=True)\n    with open(Path.home() / \".kira-hq\" / \"needs-attention.md\") as f:\n        content = f.read()\n    # Parse markdown → return structured JSON (or just return raw markdown)\n    return {\"markdown\": content}  # Frontend can render markdown\n\n@router.get(\"/blockers\")\ndef blockers():\n    with open(Path.home() / \".kira-hq\" / \"projects.yaml\") as f:\n        projects = yaml.safe_load(f)[\"projects\"]\n    blocked = []\n    for p in [p for p in projects if p[\"status\"] == \"active\"]:\n        tasks_json = subprocess.run([\"task-master\", \"list\", \"--json\"], cwd=p[\"path\"], capture_output=True, text=True).stdout\n        tasks = json.loads(tasks_json) if tasks_json else []\n        for t in tasks:\n            if t.get(\"status\") == \"blocked\":\n                blocked.append({\"project\": p[\"name\"], \"task\": t})\n    return {\"blockers\": blocked}\n```\nRegister in main.py.",
+      "testStrategy": "Smoke: curl /views/needs-attention → assert returns markdown. Integration: create blocked task → curl /views/blockers → assert task appears. E2E: Postman collection verifies both endpoints return valid JSON.",
+      "subtasks": [],
+      "blocks": []
+    },
+    {
+      "id": "22",
+      "title": "Module 2: Implement POST /projects/{name}/tasks endpoint",
+      "description": "Add new task or fix to a project via API, calling task-master add under the hood.",
+      "status": "pending",
+      "priority": "medium",
+      "dependencies": [
+        "20"
+      ],
+      "details": "Extend `backend/app/routes/projects.py`:\n```python\nfrom pydantic import BaseModel\n\nclass TaskCreate(BaseModel):\n    title: str\n    description: str = \"\"\n    priority: str = \"medium\"\n    parent_id: int = None  # for fixes\n\n@router.post(\"/{name}/tasks\")\ndef add_task(name: str, task: TaskCreate):\n    with open(Path.home() / \".kira-hq\" / \"projects.yaml\") as f:\n        projects = yaml.safe_load(f)[\"projects\"]\n    project = next((p for p in projects if p[\"name\"] == name), None)\n    if not project:\n        raise HTTPException(404, \"Project not found\")\n    \n    cmd = [\"task-master\", \"add\", task.title, \"--description\", task.description, \"--priority\", task.priority]\n    if task.parent_id:\n        cmd += [\"--parent\", str(task.parent_id)]\n    \n    result = subprocess.run(cmd, cwd=project[\"path\"], capture_output=True, text=True, check=True)\n    return {\"message\": \"Task added\", \"output\": result.stdout}\n```\nHandle errors (task-master failures) with try/except.",
+      "testStrategy": "Smoke: POST to /projects/kira-hq/tasks with JSON {\"title\": \"Test task\"} → assert 200 response → verify task appears in `task-master list`. Integration: POST with parent_id → verify fix created. E2E: Postman: test invalid project → assert 404.",
+      "subtasks": [],
+      "blocks": []
+    },
+    {
+      "id": "23",
+      "title": "Module 2: Implement GET /metrics/tokens endpoint",
+      "description": "Aggregate token usage from daily JSON files (task 5) with filters for date range and per-project breakdown.",
+      "status": "pending",
+      "priority": "medium",
+      "dependencies": [
+        "5",
+        "18"
+      ],
+      "details": "Create `backend/app/routes/metrics.py`:\n```python\nfrom fastapi import APIRouter, Query\nimport json, glob\nfrom pathlib import Path\nfrom datetime import datetime, timedelta\n\nrouter = APIRouter(prefix=\"/metrics\", tags=[\"metrics\"])\n\n@router.get(\"/tokens\")\ndef tokens(since: str = Query(None), until: str = Query(None)):\n    metrics_dir = Path.home() / \".kira-hq\" / \"metrics\"\n    files = sorted(glob.glob(str(metrics_dir / \"tokens-*.json\")))\n    \n    # Filter by date range if provided\n    if since:\n        files = [f for f in files if f.split(\"-\")[-1].replace(\".json\", \"\") >= since]\n    if until:\n        files = [f for f in files if f.split(\"-\")[-1].replace(\".json\", \"\") <= until]\n    \n    totals = {}\n    for fpath in files:\n        with open(fpath) as f:\n            daily = json.load(f)\n            for proj, counts in daily.items():\n                if proj not in totals:\n                    totals[proj] = {\"in\": 0, \"out\": 0}\n                totals[proj][\"in\"] += counts[\"in\"]\n                totals[proj][\"out\"] += counts[\"out\"]\n    \n    return {\"totals\": totals, \"period\": {\"since\": since, \"until\": until}}\n```\nRegister in main.py.",
+      "testStrategy": "Smoke: populate 3 daily token files → curl /metrics/tokens → verify aggregated totals correct. Integration: curl /metrics/tokens?since=2026-04-15 → verify only files >=that date included. E2E: Postman collection verifies date filtering logic.",
+      "subtasks": [],
+      "blocks": [
+        "24"
+      ]
+    },
+    {
+      "id": "24",
+      "title": "Module 2: Add HTTP Basic Auth and complete tests/README/DoD",
+      "description": "Implement auth (§6.12), write smoke/integration/E2E tests, document, achieve Module 2 DoD.",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "23",
+        "2"
+      ],
+      "details": "Add auth to `backend/app/main.py`:\n```python\nfrom fastapi import Depends, HTTPException, status\nfrom fastapi.security import HTTPBasic, HTTPBasicCredentials\nimport os, secrets\n\nsecurity = HTTPBasic()\n\ndef verify_auth(credentials: HTTPBasicCredentials = Depends(security)):\n    user = os.getenv(\"KIRA_HQ_USER\", \"mariusz\")\n    passwd = os.getenv(\"KIRA_HQ_PASS\", \"\")\n    if not secrets.compare_digest(credentials.username, user) or not secrets.compare_digest(credentials.password, passwd):\n        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, headers={\"WWW-Authenticate\": \"Basic\"})\n    return credentials.username\n\n# Apply to all routes (or specific endpoints):\n# @app.get(\"/projects\", dependencies=[Depends(verify_auth)])\n# For localhost-only: skip auth, document that auth only activates when KIRA_HQ_PASS is set\n```\nWrite tests (smoke: each endpoint returns 200 on fixture; integration: real projects.yaml; E2E: Postman collection in docs/).\nCreate `docs/MODULE_2_FASTAPI.md` with inputs/outputs/error modes.\nRun `scripts/verify_module_done.sh 2`.",
+      "testStrategy": "Smoke: all endpoints pass without auth (localhost mode). Integration: set KIRA_HQ_PASS → verify 401 without credentials, 200 with correct creds. E2E: Postman collection tests all 6 endpoints + auth. Verify DoD: all tests pass, README complete.",
+      "subtasks": [],
+      "blocks": [
+        "29",
+        "33",
+        "35"
+      ]
+    },
+    {
+      "id": "25",
+      "title": "Module 4: Scaffold Hermes integration (skills + Telegram stubs)",
+      "description": "Create skill stubs for kira-hq-report and kira-weekly-review, plus Telegram command handler stubs (real impl requires Hermes install in Faza 4).",
+      "status": "pending",
+      "priority": "medium",
+      "dependencies": [
+        "12",
+        "15"
+      ],
+      "details": "Create `~/.kira-hq/skills-shared/kira-hq-report/SKILL.md` and `run.sh`:\n```bash\n#!/bin/bash\n# Generates summary for cron post-cycle: changes since last run, blockers, alerts\necho \"📊 Kira-HQ Report\"\npython ~/.kira-hq/scripts/generate_report.py\n```\nCreate `scripts/generate_report.py` (reads pipeline.log since last run, counts completions, lists blockers).\n\nCreate `~/.kira-hq/skills-shared/kira-weekly-review/SKILL.md` and `run.sh` (invokes task 26's weekly review script).\n\nCreate `scripts/telegram_handlers.py` (stubs for /status, /blockers, /add, /fix, /review):\n```python\ndef handle_status(chat_id):\n    # Read global-kanban.md → send summary to chat_id\n    print(f\"Stub: would send status to {chat_id}\")\n\ndef handle_blockers(chat_id):\n    # Read needs-attention.md blockers section → send to chat_id\n    print(f\"Stub: would send blockers to {chat_id}\")\n\n# etc.\n```\nDocument in `docs/MODULE_4_HERMES.md` that these are stubs, real Telegram integration happens in Faza 4.",
+      "testStrategy": "Smoke: invoke each skill stub → verify prints expected output. Integration: verify skills symlinked to ~/.hermes/skills/ (manual setup). E2E: document in README that Telegram commands are stubs, require Hermes to activate.",
+      "subtasks": [],
+      "blocks": [
+        "26",
+        "28",
+        "31"
+      ]
+    },
+    {
+      "id": "26",
+      "title": "Module 4: Implement kira-weekly-review skill",
+      "description": "Build the weekly review skill (§6.18) that aggregates tasks, tokens, cron success rate, parallel-track comparison, and outputs markdown + Telegram message.",
+      "status": "pending",
+      "priority": "medium",
+      "dependencies": [
+        "5",
+        "4",
+        "25"
+      ],
+      "details": "Create `~/.kira-hq/skills-shared/kira-weekly-review/run.sh`:\n```bash\n#!/bin/bash\npython ~/.kira-hq/scripts/weekly_review.py\n```\nCreate `scripts/weekly_review.py`:\n```python\nimport datetime, yaml, json, glob\nfrom pathlib import Path\n\ndef weekly_review():\n    week = datetime.date.today().isocalendar()[1]\n    year = datetime.date.today().year\n    \n    with open(Path.home() / \".kira-hq\" / \"projects.yaml\") as f:\n        projects = yaml.safe_load(f)[\"projects\"]\n    \n    review = f\"# Weekly Review {year}-W{week:02d}\\n\\n\"\n    \n    # Tasks completed this week per project\n    review += \"## Tasks Completed\\n\"\n    for p in projects:\n        # Count done tasks from last 7 days in tasks.json\n        # (requires task-master to expose completed_at timestamps)\n        review += f\"- {p['name']}: X tasks\\n\"\n    \n    # Tokens (sum last 7 daily files)\n    review += \"\\n## Token Usage\\n\"\n    token_files = sorted(glob.glob(str(Path.home() / \".kira-hq\" / \"metrics\" / \"tokens-*.json\")))[-7:]\n    totals = {}\n    for f in token_files:\n        with open(f) as tf:\n            daily = json.load(tf)\n            for proj, counts in daily.items():\n                if proj not in totals: totals[proj] = 0\n                totals[proj] += counts[\"in\"] + counts[\"out\"]\n    top3 = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:3]\n    for proj, count in top3:\n        review += f\"- {proj}: {count:,} tokens\\n\"\n    \n    # Cron success rate (from pipeline.log)\n    # Snapshot health (check last 7 days)\n    # Parallel track comparison (if in Faza 2 period)\n    \n    outpath = Path.home() / \".kira-hq\" / \"reviews\" / f\"{year}-W{week:02d}.md\"\n    with open(outpath, \"w\") as out:\n        out.write(review)\n    \n    print(f\"✅ Weekly review written to {outpath}\")\n    # Stub: send to Telegram (real impl in Faza 4)\n```\nSchedule cron: Saturday 09:00.",
+      "testStrategy": "Smoke: run weekly_review.py manually → verify ~/.kira-hq/reviews/YYYY-WW.md created with expected sections. Integration: populate 7 days of token data + pipeline log → verify aggregates correct. E2E: trigger via Telegram /review (stub prints message).",
+      "subtasks": [],
+      "blocks": [
+        "27",
+        "28"
+      ]
+    },
+    {
+      "id": "27",
+      "title": "Module 4: Document parallel-track evaluation framework",
+      "description": "Create PARALLEL_TRACK.md (§6.14) documenting comparison criteria and weekly data collection template.",
+      "status": "pending",
+      "priority": "low",
+      "dependencies": [
+        "26"
+      ],
+      "details": "Create `docs/PARALLEL_TRACK.md`:\n```markdown\n# Parallel Track Evaluation: Hermes vs Claude Code\n\n## Duration\n2–3 weeks starting 2026-04-XX (Faza 2)\n\n## Paths\n- **Path A (Hermes):** cron in ~/.hermes/scheduler, skills via Hermes agent, Telegram gateway\n- **Path B (Claude Code):** manual `/run kira-hq-render-kanban`, launchctl cron (no Hermes)\n\n## Comparison Metrics (weekly)\n| Metric                     | Path A (Hermes) | Path B (Claude) |\n|----------------------------|-----------------|------------------|\n| Tasks completed            |                 |                  |\n| Tokens used (total)        |                 |                  |\n| Human interventions req.   |                 |                  |\n| Alert noise (false pos.)   |                 |                  |\n| Average latency (skill)    |                 |                  |\n| Cron failures              |                 |                  |\n\n## Week 1 (2026-04-XX)\n[Manual data entry each Friday]\n\n## Week 2\n...\n\n## Decision Criteria\n- Primary: fewer human interventions + lower token cost\n- Secondary: latency, alert quality\n- Final decision documented in ADR-0002\n```\nCreate `docs/ADR/0002-orchestrator-decision.md` template (to be filled after evaluation).",
+      "testStrategy": "Manual review: verify PARALLEL_TRACK.md has all required sections. Integration: weekly review skill (task 26) reads this doc and appends data. E2E: after 2 weeks, verify table populated with real data.",
+      "subtasks": [],
+      "blocks": [
+        "28",
+        "32"
+      ]
+    },
+    {
+      "id": "28",
+      "title": "Module 4: Create Hermes skills symlinks and complete Module 4 DoD",
+      "description": "Symlink all Kira-HQ skills to ~/.hermes/skills/, write tests, document, achieve Module 4 DoD.",
+      "status": "pending",
+      "priority": "medium",
+      "dependencies": [
+        "25",
+        "26",
+        "27"
+      ],
+      "details": "Create symlinks (manual or via script):\n```bash\nfor skill in kira-hq-render-kanban kira-hq-report kira-weekly-review kira-add-project; do\n  ln -sf ~/.kira-hq/skills-shared/$skill ~/.hermes/skills/$skill\ndone\n```\nWrite `tests/smoke/test_hermes_skills.py` (invoke each skill stub, assert no crash).\nWrite `tests/integration/test_telegram_commands.py` (stub handlers, verify response format).\nCreate `docs/MODULE_4_HERMES.md` documenting:\n- Skills available\n- Telegram commands (stubs)\n- Parallel track setup\n- DoD checklist (smoke/integration/E2E stubs pass, README complete)\nRun `scripts/verify_module_done.sh 4`.",
+      "testStrategy": "Smoke: verify all symlinks exist → invoke each skill → assert exit 0. Integration: simulate Telegram command (call handler with fake chat_id) → verify stub response. E2E: document that real Hermes integration tested in Faza 4. Verify DoD: all tests pass, README complete.",
+      "subtasks": [],
+      "blocks": [
+        "29",
+        "33",
+        "35"
+      ]
+    },
+    {
+      "id": "29",
+      "title": "Cross-cutting: Set up GitHub Actions CI pipeline",
+      "description": "Configure CI to run smoke, integration, and E2E tests on every push to main and nightly.",
+      "status": "pending",
+      "priority": "medium",
+      "dependencies": [
+        "16",
+        "24",
+        "28"
+      ],
+      "details": "Create `.github/workflows/ci.yml`:\n```yaml\nname: Kira-HQ CI\n\non:\n  push:\n    branches: [main]\n  schedule:\n    - cron: '0 2 * * *'  # Nightly 02:00 UTC\n\njobs:\n  test:\n    runs-on: macos-latest\n    steps:\n      - uses: actions/checkout@v3\n      - uses: actions/setup-python@v4\n        with:\n          python-version: '3.12'\n      - uses: actions/setup-node@v3\n        with:\n          node-version: '22'\n      - name: Install dependencies\n        run: |\n          pip install -r backend/requirements.txt\n          pip install pytest\n          npm install -g task-master-ai playwright\n          npx playwright install\n      - name: Run smoke tests\n        run: pytest tests/smoke/\n      - name: Run integration tests\n        run: pytest tests/integration/\n      - name: Run E2E tests\n        run: npx playwright test tests/e2e/\n```\nAdd badge to README.md.",
+      "testStrategy": "Smoke: push a commit → verify GitHub Actions runs → assert all test jobs pass. Integration: introduce intentional test failure → verify CI catches it. E2E: verify nightly schedule triggers at 02:00 UTC.",
+      "subtasks": [],
+      "blocks": []
+    },
+    {
+      "id": "30",
+      "title": "Cross-cutting: Create project-level .env skeleton per projects.yaml",
+      "description": "For each project in projects.yaml, create ~/Projects/<name>/.env with chmod 600 if it doesn't exist (per §6.5).",
+      "status": "pending",
+      "priority": "low",
+      "dependencies": [
+        "3",
+        "10"
+      ],
+      "details": "Extend `scripts/add_project.py` (task 10) to always create `.env` skeleton.\nCreate `scripts/sync_project_envs.py` (idempotent: checks projects.yaml, creates .env for any project missing it):\n```python\nimport yaml, os\nfrom pathlib import Path\n\nwith open(Path.home() / \".kira-hq\" / \"projects.yaml\") as f:\n    projects = yaml.safe_load(f)[\"projects\"]\n\nfor p in projects:\n    env_path = Path(p[\"path\"]) / \".env\"\n    if not env_path.exists():\n        env_path.write_text(\"# Project-specific secrets\\n\")\n        os.chmod(env_path, 0o600)\n        print(f\"Created {env_path}\")\n```\nRun once during Faza 2 setup, then on-demand via `kira-hq sync-envs`.",
+      "testStrategy": "Smoke: add project without .env → run sync script → verify .env created with chmod 600. Integration: run on projects.yaml with 3 projects → verify all have .env. E2E: manually delete .env, run sync, verify recreated.",
+      "subtasks": [],
+      "blocks": []
+    },
+    {
+      "id": "31",
+      "title": "Cross-cutting: Implement unstale command for Telegram",
+      "description": "Allow user to un-stale a project via Telegram /unstale <project>, setting status back to active in projects.yaml.",
+      "status": "pending",
+      "priority": "low",
+      "dependencies": [
+        "25",
+        "6"
+      ],
+      "details": "Extend `scripts/telegram_handlers.py` (task 25):\n```python\ndef handle_unstale(chat_id, project_name):\n    with open(Path.home() / \".kira-hq\" / \"projects.yaml\") as f:\n        projects_yaml = yaml.safe_load(f)\n    \n    project = next((p for p in projects_yaml[\"projects\"] if p[\"name\"] == project_name), None)\n    if not project:\n        return f\"❌ Project '{project_name}' not found\"\n    if project[\"status\"] != \"stale\":\n        return f\"⚠️  Project '{project_name}' is not stale (current: {project['status']})\"\n    \n    project[\"status\"] = \"active\"\n    with open(Path.home() / \".kira-hq\" / \"projects.yaml\", \"w\") as f:\n        yaml.dump(projects_yaml, f)\n    \n    return f\"✅ Project '{project_name}' is now active\"\n```\nDocument in Module 4 README.\nCreate corresponding API endpoint in Module 2: `PATCH /projects/{name}/status`.",
+      "testStrategy": "Smoke: mark project stale in projects.yaml → call handle_unstale → verify status changed to active. Integration: invoke via Telegram stub → verify response message. E2E: Postman: PATCH /projects/kira-hq/status with {\"status\": \"active\"} → verify updated.",
+      "subtasks": [],
+      "blocks": []
+    },
+    {
+      "id": "32",
+      "title": "Cross-cutting: Implement launchctl cron for macOS (Path B parallel track)",
+      "description": "Set up launchctl plist for running kira-hq-render-kanban every 2 hours as Path B alternative to Hermes cron.",
+      "status": "pending",
+      "priority": "medium",
+      "dependencies": [
+        "15",
+        "27"
+      ],
+      "details": "Create `~/Library/LaunchAgents/com.kira-hq.renderer.plist`:\n```xml\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n    <key>Label</key>\n    <string>com.kira-hq.renderer</string>\n    <key>ProgramArguments</key>\n    <array>\n        <string>/bin/bash</string>\n        <string>~/.kira-hq/skills-shared/kira-hq-render-kanban/run.sh</string>\n    </array>\n    <key>StartInterval</key>\n    <integer>7200</integer>  <!-- 2 hours -->\n    <key>RunAtLoad</key>\n    <true/>\n    <key>StandardOutPath</key>\n    <string>~/.kira-hq/logs/renderer.stdout.log</string>\n    <key>StandardErrorPath</key>\n    <string>~/.kira-hq/logs/renderer.stderr.log</string>\n</dict>\n</plist>\n```\nLoad with `launchctl load ~/Library/LaunchAgents/com.kira-hq.renderer.plist`.\nDocument in PARALLEL_TRACK.md as Path B setup.",
+      "testStrategy": "Smoke: load plist → verify launchctl list shows com.kira-hq.renderer → wait 1 cycle → check logs for successful run. Integration: unload, reload → verify no errors. E2E: monitor for 1 day → verify runs every 2 hours, pipeline.log updated.",
+      "subtasks": [],
+      "blocks": []
+    },
+    {
+      "id": "33",
+      "title": "Documentation: Write comprehensive root README.md",
+      "description": "Create the main project README documenting architecture, setup instructions, module status, and links to detailed docs.",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "17",
+        "24",
+        "28"
+      ],
+      "details": "Create `README.md`:\n```markdown\n# Kira-HQ v2.0\n\nCommand center for managing 10–15 AI-driven projects in parallel.\n\n## Architecture\n- **Module 1:** Markdown renderer (kanban_board.md per project) ✅\n- **Module 2:** FastAPI backend (REST API over project state) ✅\n- **Module 3:** Next.js frontend (dashboard UI) [Faza 3]\n- **Module 4:** Hermes integration (skills + Telegram) ✅ (stubs)\n\n## Setup\n1. Install dependencies: `pip install -r backend/requirements.txt && npm install -g task-master-ai`\n2. Configure secrets: `cp ~/.kira-hq/.env.example ~/.kira-hq/.env` (edit with real keys)\n3. Initialize projects: `kira-hq add-project ~/Projects/my-project`\n4. Start API: `cd backend && ./run.sh`\n5. Run renderer: `kira-hq-render-kanban`\n\n## Docs\n- [Module 1: Renderer](docs/MODULE_1_RENDERER.md)\n- [Module 2: FastAPI](docs/MODULE_2_FASTAPI.md)\n- [Module 4: Hermes](docs/MODULE_4_HERMES.md)\n- [Secrets](docs/SECRETS.md)\n- [Parallel Track](docs/PARALLEL_TRACK.md)\n- [ADRs](docs/ADR/INDEX.md)\n\n## Testing\n- Smoke: `pytest tests/smoke/`\n- Integration: `pytest tests/integration/`\n- E2E: `npx playwright test tests/e2e/`\n\n## Status (Faza 2)\n- [x] Module 1 production-ready\n- [x] Cross-cutting concerns (§6) implemented\n- [x] Module 2 FastAPI backend\n- [x] Module 4 Hermes stubs\n- [ ] Module 3 Next.js frontend (Faza 3)\n```\nLink to PRD, architecture diagram (ASCII art from PRD §3).",
+      "testStrategy": "Manual review: verify all links work, setup instructions accurate. Integration: follow setup steps on fresh Mac → verify successful initialization. E2E: share README with user, gather feedback.",
+      "subtasks": [],
+      "blocks": [
+        "34",
+        "35"
+      ]
+    },
+    {
+      "id": "34",
+      "title": "Documentation: Create CHANGELOG.md tracking Faza milestones",
+      "description": "Document completed phases, key decisions, and version history.",
+      "status": "pending",
+      "priority": "low",
+      "dependencies": [
+        "33"
+      ],
+      "details": "Create `CHANGELOG.md`:\n```markdown\n# Changelog\n\nAll notable changes to Kira-HQ.\n\n## [Faza 2] - 2026-04-XX\n\n### Added\n- Module 1: Production-ready markdown renderer with kanban boards\n- Module 2: FastAPI backend with 6 REST endpoints\n- Module 4: Hermes integration stubs (skills + Telegram handlers)\n- Cross-cutting: pipeline logs, token tracking, cron retry, backups, ADRs, needs-attention algorithm\n- Parallel track evaluation framework (Hermes vs Claude Code)\n- CI/CD: GitHub Actions for smoke/integration/E2E tests\n\n### Fixed\n- Task-master SDK RangeError workaround smoke test\n\n## [Faza 1] - 2026-04-16\n\n### Added\n- Kira-HQ skeleton directory structure\n- Initial markdown renderer (6 tasks rendered)\n- Homebrew, Python 3.12, Node 22, uv, task-master, MCP servers\n\n## [Faza 0] - 2026-04-16\n\n### Added\n- Environment setup (Homebrew, Python, Node, uv)\n- ~/.kira-hq/ global directory initialized\n```\nUpdate after each Faza completion.",
+      "testStrategy": "Manual review: verify chronological order, accuracy of entries. Integration: compare against git log and PRD milestones. E2E: use as reference for status reports.",
+      "subtasks": [],
+      "blocks": []
+    },
+    {
+      "id": "35",
+      "title": "Final validation: Run full DoD checklist for Faza 2 completion",
+      "description": "Execute comprehensive validation across all modules to confirm Faza 2 is production-ready per §6.17 Definition of Done.",
+      "status": "pending",
+      "priority": "high",
+      "dependencies": [
+        "17",
+        "24",
+        "28",
+        "33"
+      ],
+      "details": "Create `scripts/validate_faza2.sh`:\n```bash\n#!/bin/bash\nset -e\n\necho \"=== Faza 2 Validation ===\"\n\n# Module 1\necho \"[1/4] Module 1 Renderer...\"\npytest tests/smoke/test_render_kanban.py\npytest tests/integration/test_render_real_projects.py\nnpx playwright test tests/e2e/test_kanban_browser.spec.js\ntest -f docs/MODULE_1_RENDERER.md || (echo \"Missing MODULE_1_RENDERER.md\" && exit 1)\n\n# Module 2\necho \"[2/4] Module 2 FastAPI...\"\npytest tests/smoke/test_fastapi.py\npytest tests/integration/test_api_real_data.py\ntest -f docs/MODULE_2_FASTAPI.md || (echo \"Missing MODULE_2_FASTAPI.md\" && exit 1)\n\n# Module 4\necho \"[3/4] Module 4 Hermes...\"\npytest tests/smoke/test_hermes_skills.py\ntest -f docs/MODULE_4_HERMES.md || (echo \"Missing MODULE_4_HERMES.md\" && exit 1)\n\n# Cross-cutting\necho \"[4/4] Cross-cutting...\"\ntest -d ~/.kira-hq/skills-shared/.git || (echo \"Skills library not initialized\" && exit 1)\ntest -f ~/.kira-hq/projects.yaml || (echo \"projects.yaml missing\" && exit 1)\ngrep -q \"version: 2\" ~/.kira-hq/projects.yaml || (echo \"projects.yaml not v2\" && exit 1)\ntest -f ~/.kira-hq/.env || (echo \".env missing\" && exit 1)\ntest $(stat -f %A ~/.kira-hq/.env) = \"600\" || (echo \".env permissions wrong\" && exit 1)\n\necho \"✅ Faza 2 validation PASSED\"\n```\nRun before marking Faza 2 complete. If any check fails, block completion until fixed.",
+      "testStrategy": "Smoke: run validation script on incomplete setup → verify it catches missing components. Integration: run on fully implemented Faza 2 → assert all checks pass. E2E: use as gate for Faza 2→3 transition approval.",
+      "subtasks": [],
+      "blocks": []
+    }
+  ],
+  "metadata": {
+    "total": 35,
+    "filtered": 35,
+    "tag": "master",
+    "storageType": "file",
+    "allTags": false
+  }
+}
