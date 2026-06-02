@@ -501,13 +501,35 @@
         "status": "done",
         "subtasks": [],
         "updatedAt": "2026-04-20T14:15:11.784Z"
+      },
+      {
+        "id": "35",
+        "title": "Claude-first orchestrator path + Hermes/Qwen worker bridge",
+        "description": "Make local Claude Code the primary orchestrator interface while Hermes becomes an invokable CLI worker that routes routine code work through OpenRouter qwen3-coder and shares the same Kira-HQ substrate.",
+        "priority": "high",
+        "status": "done",
+        "dependencies": [],
+        "details": "Follow-up to the dual-interface audit. Build the missing pieces needed so local Claude Code becomes the main orchestrator interface for this machine while Hermes is used as a bash-invoked worker CLI for implementation work. Requirements: (1) add repo-root CLAUDE.md describing the shared Kira-HQ system, the canonical task/tag context, and the rule that Claude is the orchestrator while Hermes is the implementation worker; (2) add neutral local CLI entrypoints so Claude can safely list/add/update tasks without hand-editing tasks.json; (3) define and document the Hermes invocation contract from Claude, including calling Hermes from bash with the OpenRouter qwen3-coder worker/model used in Hermes; (4) inspect Claude plugin/MCP/extensibility and add the missing OpenRouter/Qwen access path analogous to the existing Codex plugin/tooling so Claude can delegate routine code work to OR/qwen; (5) preserve one shared filesystem/data substrate (projects.yaml, task store, pipeline/global logs, shared skills); (6) keep Hermes-specific vs shared skills intentional and document promotion rules; (7) update docs and doctor/readiness checks so the second interface is explicit, not implicit.",
+        "testStrategy": "Smoke: direct Claude-oriented local commands for task listing and task creation hit the same live store as Hermes. Integration: a Claude-side invocation path can call Hermes as a bash worker with the configured OpenRouter qwen model and record provider/pipeline metadata on the shared substrate. Verification should include symlink health, currentTag guard, and explicit proof that no manual JSON editing is needed.",
+        "updatedAt": "2026-04-21T10:51:52Z"
+      },
+      {
+        "id": "36",
+        "title": "End-to-end validation: Claude command delegates implementation to OR/Qwen via Hermes worker",
+        "description": "Prove the new two-interface setup works by executing one controlled end-to-end delegation from Claude orchestrator to Hermes worker using the OpenRouter qwen implementation path.",
+        "priority": "high",
+        "status": "done",
+        "dependencies": [],
+        "details": "After Task 35 lands, implement an end-to-end validation task that proves the architecture with a real controlled run. Scenario: Claude receives a user command in the repo context, decides to delegate routine implementation to the OR/qwen path through Hermes-as-worker, executes the delegated step, and returns a structured handoff/result while both interfaces continue to use the same task store, shared skills, and shared logs. The validation should exercise at least: task visibility parity, safe mutation path, Claude-to-Hermes bash invocation, Hermes-to-OpenRouter qwen worker routing, shared pipeline logging/metadata, and an operator-readable success report. Prefer a narrow fixture/sandboxed task rather than risky broad repo mutation.",
+        "testStrategy": "Integration/E2E: run one real delegation from Claude-orchestrator to Hermes-worker to OR/qwen on a bounded fixture task; assert the delegated action occurred, shared state/logs were updated consistently, and the final result/report flowed back to Claude without breaking task parity. Include a negative/diagnostic check for misconfiguration (missing OR credentials or missing bridge command) that fails clearly.",
+        "updatedAt": "2026-04-21T10:51:52Z"
       }
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-04-20T21:27:01.942Z",
-      "taskCount": 34,
-      "completedCount": 33,
+      "lastModified": "2026-04-21T10:51:52Z",
+      "taskCount": 36,
+      "completedCount": 35,
       "tags": [
         "master"
       ]

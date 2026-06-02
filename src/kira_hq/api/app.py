@@ -11,11 +11,9 @@ state — important for parallel test sessions.
 """
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -23,6 +21,7 @@ from fastapi import FastAPI
 
 from kira_hq.api.auth import make_auth_dependency
 from kira_hq.api.routers import metrics, projects, views
+from kira_hq.task_store import add_task as shared_add_task
 
 # ---------------------------------------------------------------------------
 # Default loaders / runners (real I/O — overridden in tests)
@@ -136,62 +135,15 @@ def default_taskmaster_add_task(
     priority: str,
     parent_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Append a task by editing tasks.json directly.
-
-    PRD §4 Module 2 says POST writes via `task-master`, but the real
-    `task-master add-task` invokes `claude-agent-sdk` (LLM-backed) — too
-    expensive and fragile for a synchronous HTTP request. Direct JSON mutation
-    matches the renderer's read path and uses an advisory lock + atomic replace
-    to stay safe under concurrent requests.
-    """
-    tasks_file = Path(project_path) / ".taskmaster" / "tasks" / "tasks.json"
-    if not tasks_file.exists():
-        raise FileNotFoundError("project task store is missing")
-
-    lock_path = tasks_file.with_suffix(".json.lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+", encoding="utf-8") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            data = json.loads(tasks_file.read_text())
-            tag, section = _discover_task_section(data)
-            tasks = section.setdefault("tasks", [])
-            if not isinstance(tasks, list):
-                raise ValueError(f"tasks.json section {tag!r} has a non-list 'tasks' field")
-
-            existing_ids = {str(task.get("id")) for task in tasks}
-            next_id = 1
-            while str(next_id) in existing_ids:
-                next_id += 1
-
-            new = {
-                "id": str(next_id),
-                "title": title,
-                "description": description,
-                "priority": priority,
-                "status": "pending",
-                "dependencies": [parent_id] if parent_id else [],
-            }
-            tasks.append(new)
-
-            with tempfile.NamedTemporaryFile(
-                "w",
-                encoding="utf-8",
-                dir=tasks_file.parent,
-                prefix=f"{tasks_file.name}.",
-                suffix=".tmp",
-                delete=False,
-            ) as tmp_file:
-                json.dump(data, tmp_file, indent=2)
-                tmp_file.write("\n")
-                tmp_file.flush()
-                os.fsync(tmp_file.fileno())
-                tmp_name = tmp_file.name
-
-            Path(tmp_name).replace(tasks_file)
-            return new
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    """Append a task through the shared local task-store writer."""
+    mutation = shared_add_task(
+        project_path,
+        title=title,
+        description=description,
+        priority=priority,
+        dependencies=[parent_id] if parent_id else [],
+    )
+    return mutation.task
 
 
 def default_pipeline_log_loader() -> Path:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -14,7 +15,22 @@ pytestmark = pytest.mark.integration
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
-SHARED_RUNNER = Path.home() / ".kira-hq" / "skills-shared" / "kira-hq-execute" / "run.py"
+REPO_RUNNER = REPO_ROOT / "scripts" / "kira_hq_execute.py"
+
+
+def _shared_runner_path(tmp_path: Path) -> Path:
+    """Materialize a portable shared-wrapper path for CI and local runs.
+
+    CI does not ship the user's real ~/.kira-hq/skills-shared tree, so these
+    integration tests create the expected wrapper layout in a temp HOME and copy
+    the thin repo runner there. This keeps the test faithful to the shared-skill
+    invocation contract without depending on machine-local state.
+    """
+    fake_home = tmp_path / "home"
+    runner = fake_home / ".kira-hq" / "skills-shared" / "kira-hq-execute" / "run.py"
+    runner.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(REPO_RUNNER, runner)
+    return runner
 
 
 def _env() -> dict[str, str]:
@@ -169,6 +185,7 @@ def _write_project(path: Path, *, with_subtasks: bool = False) -> tuple[Path, Pa
 
 
 def test_subtask_provider_expands_once_populates_plan_steps_and_logs(tmp_path: Path):
+    shared_runner = _shared_runner_path(tmp_path)
     project, tasks_file, plan = _write_project(tmp_path)
     task_master = _write_fake_task_master(tmp_path)
     executor = _write_fake_executor(tmp_path)
@@ -180,7 +197,7 @@ def test_subtask_provider_expands_once_populates_plan_steps_and_logs(tmp_path: P
     result = subprocess.run(
         [
             sys.executable,
-            str(SHARED_RUNNER),
+            str(shared_runner),
             "--task-id",
             "25",
             "--project-dir",
@@ -229,6 +246,7 @@ def test_subtask_provider_expands_once_populates_plan_steps_and_logs(tmp_path: P
 
 
 def test_subtask_provider_with_existing_subtasks_skips_expand(tmp_path: Path):
+    shared_runner = _shared_runner_path(tmp_path)
     project, tasks_file, plan = _write_project(tmp_path, with_subtasks=True)
     task_master = _write_fake_task_master(tmp_path)
     executor = _write_fake_executor(tmp_path)
@@ -243,7 +261,7 @@ def test_subtask_provider_with_existing_subtasks_skips_expand(tmp_path: Path):
     result = subprocess.run(
         [
             sys.executable,
-            str(SHARED_RUNNER),
+            str(shared_runner),
             "--task-id",
             "25",
             "--project-dir",
@@ -296,6 +314,7 @@ def test_subtask_provider_with_existing_subtasks_skips_expand(tmp_path: Path):
 
 
 def test_parent_failure_twice_demotes_third_attempt_to_subtasks(tmp_path: Path):
+    shared_runner = _shared_runner_path(tmp_path)
     project, tasks_file, plan = _write_project(tmp_path)
     task_master = _write_fake_task_master(tmp_path)
     executor = _write_fake_executor(tmp_path, fail_parent_twice=True)
@@ -306,7 +325,7 @@ def test_parent_failure_twice_demotes_third_attempt_to_subtasks(tmp_path: Path):
     result = subprocess.run(
         [
             sys.executable,
-            str(SHARED_RUNNER),
+            str(shared_runner),
             "25",
             "--project-dir",
             str(project),
